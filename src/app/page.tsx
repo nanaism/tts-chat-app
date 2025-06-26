@@ -1,7 +1,5 @@
-// app/page.tsx
 "use client";
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,41 +10,83 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
-import { AlertTriangle, Bot, LoaderCircle, Send, User } from "lucide-react";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { Send, Volume2 } from "lucide-react";
+import { KeyboardEvent, useEffect, useRef, useState } from "react";
 
-interface ChatMessage {
+// メッセージの型定義
+type Message = {
   role: "user" | "ai";
   text: string;
-  isError?: boolean;
-}
+  audioData?: string; // AIのメッセージは音声データを持つことがある
+};
 
-export default function Home() {
-  const [inputValue, setInputValue] = useState("");
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+// 音声再生ボタンのコンポーネント
+const PlayAudioButton = ({ audioData }: { audioData: string }) => {
+  const playAudio = () => {
+    // Base64データが無効な場合や空の場合をチェック
+    if (!audioData || audioData.trim() === "") {
+      console.error("再生エラー: audioDataが空または無効です。");
+      return;
+    }
+    // Base64データをData URLに変換
+    const audioSrc = `data:audio/mp3;base64,${audioData}`;
+    const audio = new Audio(audioSrc);
+
+    // 再生に失敗した場合のエラーハンドリングを追加
+    audio.play().catch((e) => {
+      console.error("音声の再生に失敗しました:", e);
+      // ここでユーザーにエラーを通知するUIを表示することも可能
+    });
+  };
+
+  return (
+    <Button
+      onClick={playAudio}
+      variant="ghost"
+      size="icon"
+      className="ml-2 flex-shrink-0"
+    >
+      <Volume2 className="h-4 w-4" />
+      <span className="sr-only">音声を再生</span>
+    </Button>
+  );
+};
+
+// メインのチャットページコンポーネント
+export default function ChatPage() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
+  // メッセージリストが更新されるたびに、一番下までスクロールする
   useEffect(() => {
-    scrollAreaRef.current?.scrollTo({
-      top: scrollAreaRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [chatHistory]);
+    if (scrollAreaRef.current) {
+      const scrollElement = scrollAreaRef.current.querySelector("div");
+      if (scrollElement) {
+        scrollElement.scrollTo({
+          top: scrollElement.scrollHeight,
+          behavior: "smooth",
+        });
+      }
+    }
+  }, [messages]);
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!inputValue.trim() || isLoading) return;
+  // メッセージを送信する非同期関数
+  const handleSendMessage = async () => {
+    const trimmedInput = input.trim();
+    if (!trimmedInput || isLoading) return;
 
-    const userMessage: ChatMessage = { role: "user", text: inputValue };
-    setChatHistory((prev) => [...prev, userMessage]);
+    const userMessage: Message = { role: "user", text: trimmedInput };
+    setMessages((prev) => [...prev, userMessage]);
 
-    const currentInput = inputValue;
-    setInputValue("");
+    // input stateがクリアされる前に現在の値を保持
+    const currentInput = trimmedInput;
+    setInput("");
     setIsLoading(true);
 
     try {
+      // POSTリクエストでAPIを呼び出し
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -54,99 +94,79 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "APIリクエストに失敗しました。");
+        // APIからエラーが返ってきた場合、詳細をログに出力
+        const errorText = await response.text();
+        console.error("APIエラー:", response.status, errorText);
+        throw new Error(`APIからの応答がありませんでした: ${response.status}`);
       }
 
+      // 正常な応答をJSONとして解析
       const data = await response.json();
-      const { textResponse, audioData } = data;
 
-      const aiMessage: ChatMessage = { role: "ai", text: textResponse };
-      setChatHistory((prev) => [...prev, aiMessage]);
-
-      const audio = new Audio(`data:audio/mp3;base64,${audioData}`);
-      audio.play();
-    } catch (err: unknown) {
-      // 修正点: 'any' を 'unknown' に変更
-      // 修正点: 型ガードを追加して安全にエラーメッセージを取得
-      let errorMessage = "不明なエラーが発生しました。";
-      if (err instanceof Error) {
-        errorMessage = err.message;
-      }
-      setChatHistory((prev) => [
-        ...prev,
-        { role: "ai", text: errorMessage, isError: true },
-      ]);
+      const aiMessage: Message = {
+        role: "ai",
+        text: data.textResponse,
+        audioData: data.audioData,
+      };
+      setMessages((prev) => [...prev, aiMessage]);
+    } catch (error) {
+      console.error("メッセージ送信処理中にエラーが発生しました:", error);
+      // ユーザーにエラーを通知するためのメッセージ
+      const errorMessage: Message = {
+        role: "ai",
+        text: "申し訳ありません、エラーが発生しました。もう一度お試しください。",
+      };
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // JSX部分は変更なしのため、前回と同様のものを利用
+  // 入力欄でエンターキーが押された時の処理
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.nativeEvent.isComposing && !isLoading) {
+      e.preventDefault(); // デフォルトのエンターキーの挙動をキャンセル
+      handleSendMessage();
+    }
+  };
+
   return (
-    <div className="flex justify-center items-center min-h-screen bg-gray-100 dark:bg-gray-900 p-2 sm:p-4">
-      <Card className="w-full max-w-2xl h-[95vh] sm:h-[85vh] flex flex-col shadow-2xl">
-        <CardHeader className="border-b">
-          <CardTitle className="flex items-center gap-3 text-lg sm:text-xl">
-            <Bot className="w-7 h-7 text-blue-600" />
-            <span>Gemini 2.5 & TTS Chat</span>
-          </CardTitle>
+    <div className="flex justify-center items-center h-screen bg-gray-100 dark:bg-gray-900">
+      <Card className="w-full max-w-md h-[95vh] grid grid-rows-[auto_1fr_auto]">
+        <CardHeader>
+          <CardTitle className="text-center text-xl">Gemini TTS Chat</CardTitle>
         </CardHeader>
 
-        <CardContent className="flex-grow p-0 overflow-hidden">
-          <ScrollArea className="h-full p-4" ref={scrollAreaRef}>
-            <div className="space-y-6">
-              {chatHistory.map((msg, index) => (
+        <CardContent className="p-0 overflow-hidden">
+          <ScrollArea className="h-full" ref={scrollAreaRef}>
+            <div className="p-6 space-y-4">
+              {messages.map((msg, index) => (
                 <div
                   key={index}
-                  className={cn(
-                    "flex items-start gap-3",
-                    msg.role === "user" ? "justify-end" : ""
-                  )}
+                  className={`flex items-end gap-2 ${
+                    msg.role === "user" ? "justify-end" : "justify-start"
+                  }`}
                 >
-                  {msg.role === "ai" && (
-                    <Avatar className="w-8 h-8 border">
-                      <AvatarFallback>
-                        <Bot size={20} />
-                      </AvatarFallback>
-                    </Avatar>
-                  )}
                   <div
-                    className={cn(
-                      "p-3 rounded-xl max-w-xs md:max-w-md",
+                    className={`max-w-[80%] rounded-lg p-3 text-sm break-words ${
                       msg.role === "user"
                         ? "bg-blue-600 text-white"
-                        : "bg-gray-200 dark:bg-gray-700",
-                      {
-                        "bg-red-100 dark:bg-red-900/50 border border-red-500/50":
-                          msg.isError,
-                      }
-                    )}
+                        : "bg-gray-200 dark:bg-gray-700"
+                    }`}
                   >
-                    {msg.isError && (
-                      <AlertTriangle className="inline-block w-4 h-4 mr-2 text-red-600" />
-                    )}
-                    <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                    {msg.text}
                   </div>
-                  {msg.role === "user" && (
-                    <Avatar className="w-8 h-8 border">
-                      <AvatarFallback>
-                        <User size={20} />
-                      </AvatarFallback>
-                    </Avatar>
+                  {/* AIのメッセージで、かつaudioDataがある場合のみ再生ボタンを表示 */}
+                  {msg.role === "ai" && msg.audioData && (
+                    <PlayAudioButton audioData={msg.audioData} />
                   )}
                 </div>
               ))}
+              {/* ローディング中のインジケーター */}
               {isLoading && (
-                <div className="flex items-start gap-3">
-                  <Avatar className="w-8 h-8 border">
-                    <AvatarFallback>
-                      <Bot size={20} />
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="p-3 rounded-xl bg-gray-200 dark:bg-gray-700 flex items-center space-x-2">
-                    <LoaderCircle className="h-5 w-5 animate-spin text-gray-500" />
-                    <span className="text-sm text-gray-500">Generating...</span>
+                <div className="flex items-center justify-start space-x-2">
+                  <div className="bg-gray-200 dark:bg-gray-700 p-3 rounded-lg">
+                    <div className="w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
                   </div>
                 </div>
               )}
@@ -154,26 +174,26 @@ export default function Home() {
           </ScrollArea>
         </CardContent>
 
-        <CardFooter className="border-t pt-4">
-          <form
-            onSubmit={handleSubmit}
-            className="w-full flex items-center gap-2"
-          >
+        <CardFooter className="p-4 border-t">
+          {/* <form> を使わず、divで囲む */}
+          <div className="flex w-full items-center space-x-2">
             <Input
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder="AIにメッセージを送信..."
-              className="flex-grow"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown} // エンターキーでの送信をハンドリング
+              placeholder="メッセージを送信..."
               disabled={isLoading}
+              autoComplete="off"
             />
-            <Button type="submit" disabled={isLoading} size="icon">
-              <Send className={cn("h-5 w-5", isLoading && "hidden")} />
-              <LoaderCircle
-                className={cn("h-5 w-5 animate-spin", !isLoading && "hidden")}
-              />
+            <Button
+              type="button"
+              onClick={handleSendMessage}
+              disabled={isLoading || !input.trim()}
+            >
+              <Send className="h-4 w-4" />
               <span className="sr-only">送信</span>
             </Button>
-          </form>
+          </div>
         </CardFooter>
       </Card>
     </div>
