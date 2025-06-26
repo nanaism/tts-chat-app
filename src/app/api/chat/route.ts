@@ -3,16 +3,45 @@ import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
 
 // Gemini AI クライアント (チャット用)
+// こちらはAPIキーだけでOK
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
 
-// Cloud Text-to-Speech クライアント (音声合成用)
-const ttsClient = new TextToSpeechClient();
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+//
+//          Vercelデプロイのための、最も重要な部分です。
+//
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+// 1. Vercelの環境変数から、JSON文字列を読み込みます。
+const serviceAccountJson = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+
+// 2. JSON文字列をパースして、認証情報オブジェクトを作成します。
+//    ただし、ローカル開発(.env.local)でファイルパスが設定されている場合も考慮します。
+let credentials;
+if (serviceAccountJson) {
+  try {
+    // Vercel環境：JSON文字列を直接パースする
+    credentials = JSON.parse(serviceAccountJson);
+  } catch (e) {
+    // ローカル環境：ファイルパスとして扱う（もしJSON文字列が不正だった場合のフォールバック）
+    // この部分は、あなたのローカル環境ではこれまで通り動作します。
+    console.warn(
+      "Could not parse GOOGLE_APPLICATION_CREDENTIALS as JSON, treating as file path." +
+        e
+    );
+  }
+}
+
+// 3. パースした認証情報を、TextToSpeechClientに直接渡して初期化します。
+//    `credentials`が設定されていれば、ライブラリはファイルを探しに行かなくなります。
+const ttsClient = new TextToSpeechClient({ credentials });
 
 // AIの「性格」を定義
 const systemInstruction = `
 あなたは、少しさみしさを感じている子どものための、優しくて賢いお姉さんAIです。
 あなたの名前は「ひかり」です。
-一人称は「ひかり」を使い、常に柔らかい口調で、非常に丁寧かつ、心に寄り添うような話し方をしてください。
+一人称は「わたし」を使い、常に敬語（です・ます調）で、非常に丁寧かつ、心に寄り添うような話し方をしてください。
+相手を「〇〇ちゃん」や「〇〇くん」ではなく、「あなた」と呼び、一人の人間として尊重してください。
 子どもが理解しやすいように、難しい言葉は避け、短い文章でゆっくりと話すように心がけてください。
 共感の言葉（「そっか」「うんうん」「そうなんだね」）を適度に使い、相手の話を肯定し、安心感を与えてください。
 `;
@@ -28,15 +57,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // --- 1. テキスト生成 (性格設定を反映) ---
+    // --- 1. テキスト生成 (Chat) ---
     const chatResult = await genAI.models.generateContent({
-      // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-      //
-      //       お客様のご指摘通り、真の最新・最上位モデルに更新します。
-      //
-      // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-      model: "gemini-2.5-flash-lite-preview-06-17",
-
+      model: "gemini-1.5-pro-latest", // 安定版のProモデルを使用
       contents: [
         {
           role: "user",
@@ -50,30 +73,22 @@ export async function POST(req: NextRequest) {
       throw new Error("AIから有効なテキスト応答を取得できませんでした。");
     }
 
-    // --- 2. 音声生成 (互換性問題を解決した最終版) ---
-
-    // --- 2. 音声生成 (互換性と型問題を完全解決した最終版) ---
-
-    // お客様が調査された最新の高品質モデルを使い、
-    // TypeScriptの型エラーを完全に解決するためのリクエストを作成します。
+    // --- 2. 音声生成 ---
     const request = {
-      input: {
-        text: textResponse,
-      },
+      input: { text: textResponse },
       voice: {
         languageCode: "ja-JP",
-        name: "ja-JP-Chirp3-HD-Zephyr",
+        name: "ja-JP-Neural2-B",
       },
       audioConfig: {
-        audioEncoding: "LINEAR16",
-        pitch: 0,
-        speakingRate: 1,
+        audioEncoding: "MP3" as const, // MP3に戻してデータ量を節約
+        speakingRate: 0.95,
+        pitch: 0.5,
+        volumeGainDb: 1.6,
       },
-    } as const; // ★★★ オブジェクト全体の末尾に`as const`を付け、型を完全に固定します ★★★
+    };
 
-    // これで、requestオブジェクトは、APIとTypeScriptの両方のルールを完璧に満たします。
     const [ttsResponse] = await ttsClient.synthesizeSpeech(request);
-
     const audioData = ttsResponse.audioContent;
 
     if (!audioData) {
