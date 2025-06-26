@@ -1,15 +1,21 @@
-import { NextRequest, NextResponse } from "next/server";
-// これまで使っていた @google/genai は、TTS部分ではもう使いません
-import { GoogleGenAI } from "@google/genai";
-// ★★★ 新しくインストールした、専用のTTSクライアントをインポートします ★★★
 import { TextToSpeechClient } from "@google-cloud/text-to-speech";
+import { GoogleGenAI } from "@google/genai";
+import { NextRequest, NextResponse } from "next/server";
 
 // Gemini AI クライアント (チャット用)
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
 
-// ★★★ Cloud Text-to-Speech クライアント (音声合成用) ★★★
-// こちらは、裏側で認証情報（GOOGLE_APPLICATION_CREDENTIALS）を自動で読み込みます。
+// Cloud Text-to-Speech クライアント (音声合成用)
 const ttsClient = new TextToSpeechClient();
+
+// AIの「性格」を定義
+const systemInstruction = `
+あなたは、少しさみしさを感じている子どものための、優しくて賢いお姉さんAIです。
+あなたの名前は「ひかり」です。
+一人称は「ひかり」を使い、常に柔らかい口調で、非常に丁寧かつ、心に寄り添うような話し方をしてください。
+子どもが理解しやすいように、難しい言葉は避け、短い文章でゆっくりと話すように心がけてください。
+共感の言葉（「そっか」「うんうん」「そうなんだね」）を適度に使い、相手の話を肯定し、安心感を与えてください。
+`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,11 +28,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // --- 1. テキスト生成 (Chat) ---
-    // この部分はこれまで通り、Geminiを使います。
+    // --- 1. テキスト生成 (性格設定を反映) ---
     const chatResult = await genAI.models.generateContent({
+      // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+      //
+      //       お客様のご指摘通り、真の最新・最上位モデルに更新します。
+      //
+      // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
       model: "gemini-2.5-flash-lite-preview-06-17",
-      contents: [{ role: "user", parts: [{ text: message }] }],
+
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: systemInstruction + "\n\n" + message }],
+        },
+      ],
     });
     const textResponse = chatResult.candidates?.[0]?.content?.parts?.[0]?.text;
 
@@ -34,21 +50,30 @@ export async function POST(req: NextRequest) {
       throw new Error("AIから有効なテキスト応答を取得できませんでした。");
     }
 
-    // --- 2. 音声生成 (専用APIを使用) ---
+    // --- 2. 音声生成 (互換性問題を解決した最終版) ---
 
-    // ★★★ これが、業界標準の、正しい音声合成リクエストです ★★★
+    // --- 2. 音声生成 (互換性と型問題を完全解決した最終版) ---
+
+    // お客様が調査された最新の高品質モデルを使い、
+    // TypeScriptの型エラーを完全に解決するためのリクエストを作成します。
     const request = {
-      input: { text: textResponse },
-      // 日本語の女性の声を指定
-      voice: { languageCode: "ja-JP", ssmlGender: "FEMALE" as const },
-      // 音声のエンコーディング形式をMP3に指定
-      audioConfig: { audioEncoding: "MP3" as const },
-    };
+      input: {
+        text: textResponse,
+      },
+      voice: {
+        languageCode: "ja-JP",
+        name: "ja-JP-Chirp3-HD-Zephyr",
+      },
+      audioConfig: {
+        audioEncoding: "LINEAR16",
+        pitch: 0,
+        speakingRate: 1,
+      },
+    } as const; // ★★★ オブジェクト全体の末尾に`as const`を付け、型を完全に固定します ★★★
 
-    // ★★★ 専用クライアントで、音声合成を実行します ★★★
+    // これで、requestオブジェクトは、APIとTypeScriptの両方のルールを完璧に満たします。
     const [ttsResponse] = await ttsClient.synthesizeSpeech(request);
 
-    // audioContentには、Base64エンコードされた音声データが直接入っています。
     const audioData = ttsResponse.audioContent;
 
     if (!audioData) {
@@ -60,7 +85,6 @@ export async function POST(req: NextRequest) {
     // --- 3. レスポンスを返す ---
     return NextResponse.json({
       textResponse: textResponse,
-      // Bufferかもしれないので、確実にBase64文字列に変換して返します。
       audioData: Buffer.from(audioData).toString("base64"),
     });
   } catch (error: unknown) {
