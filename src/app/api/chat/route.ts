@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
 
     // --- 1. テキスト生成 (Chat) ---
     const chatResult = await genAI.models.generateContent({
-      model: "gemini-2.5-pro",
+      model: "gemini-2.5-flash",
       contents: [
         {
           role: "user",
