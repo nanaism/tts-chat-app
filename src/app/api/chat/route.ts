@@ -1,50 +1,13 @@
-import { TextToSpeechClient } from "@google-cloud/text-to-speech";
 import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
+import WavEncoder from "wav-encoder";
+// ★★★ 1. constants.ts からプロンプトをインポート ★★★
+import { aiPrompt } from "./constant";
 
-// Gemini AI クライアント (チャット用)
-// こちらはAPIキーだけでOK
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
 
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-//
-//          Vercelデプロイのための、最も重要な部分です。
-//
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-
-// 1. Vercelの環境変数から、JSON文字列を読み込みます。
-const serviceAccountJson = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-
-// 2. JSON文字列をパースして、認証情報オブジェクトを作成します。
-//    ただし、ローカル開発(.env.local)でファイルパスが設定されている場合も考慮します。
-let credentials;
-if (serviceAccountJson) {
-  try {
-    // Vercel環境：JSON文字列を直接パースする
-    credentials = JSON.parse(serviceAccountJson);
-  } catch (e) {
-    // ローカル環境：ファイルパスとして扱う（もしJSON文字列が不正だった場合のフォールバック）
-    // この部分は、あなたのローカル環境ではこれまで通り動作します。
-    console.warn(
-      "Could not parse GOOGLE_APPLICATION_CREDENTIALS as JSON, treating as file path." +
-        e
-    );
-  }
-}
-
-// 3. パースした認証情報を、TextToSpeechClientに直接渡して初期化します。
-//    `credentials`が設定されていれば、ライブラリはファイルを探しに行かなくなります。
-const ttsClient = new TextToSpeechClient({ credentials });
-
-// AIの「性格」を定義
-const systemInstruction = `
-あなたは、少しさみしさを感じている子どものための、優しくて賢いお姉さんAIです。
-あなたの名前は「ひかり」です。
-一人称は「わたし」を使い、常に敬語（です・ます調）で、非常に丁寧かつ、心に寄り添うような話し方をしてください。
-相手を「〇〇ちゃん」や「〇〇くん」ではなく、「あなた」と呼び、一人の人間として尊重してください。
-子どもが理解しやすいように、難しい言葉は避け、短い文章でゆっくりと話すように心がけてください。
-共感の言葉（「そっか」「うんうん」「そうなんだね」）を適度に使い、相手の話を肯定し、安心感を与えてください。
-`;
+// systemInstructionの代わりにインポートしたaiPromptを使用します
+const systemInstruction = aiPrompt;
 
 export async function POST(req: NextRequest) {
   try {
@@ -73,37 +36,56 @@ export async function POST(req: NextRequest) {
       throw new Error("AIから有効なテキスト応答を取得できませんでした。");
     }
 
-    // --- 2. 音声生成 ---
-    const request = {
-      audioConfig: {
-        // ▼▼▼▼▼▼▼▼▼▼【修正点】▼▼▼▼▼▼▼▼▼▼
-        audioEncoding: "LINEAR16" as const,
-        // ▲▲▲▲▲▲▲▲▲▲【修正点】▲▲▲▲▲▲▲▲▲▲
-        pitch: 0,
-        speakingRate: 1,
-      },
-      input: {
-        text: textResponse,
-      },
-      voice: {
-        languageCode: "ja-JP",
-        name: "ja-JP-Chirp3-HD-Sulafat",
-      },
-    };
+    // --- 2. 音声生成 (Gemini API TTS) ---
 
-    const [ttsResponse] = await ttsClient.synthesizeSpeech(request);
-    const audioData = ttsResponse.audioContent;
+    // ★★★ 2. 音声のスタイルを指示するプロンプトを作成 ★★★
+    // 'ニア'の性格に合わせて「優しく、穏やかなトーンで」という指示を追加します。
+    const voiceStylePrompt = `優しく、穏やかなトーンで話してください：${textResponse}`;
 
-    if (!audioData) {
-      throw new Error(
-        "Cloud Text-to-Speech APIから有効な音声データが返されませんでした。"
-      );
+    const ttsResponse = await genAI.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      // ★★★ 3. スタイル指示付きのテキストを渡す ★★★
+      contents: [{ parts: [{ text: voiceStylePrompt }] }],
+      config: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            // "Sulafat" は「温かい」声と説明されているので、キャラクターに合うかもしれません。
+            prebuiltVoiceConfig: { voiceName: "Sulafat" },
+          },
+        },
+      },
+    });
+
+    const audioBase64 =
+      ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+    if (!audioBase64) {
+      throw new Error("Gemini APIから有効な音声データが返されませんでした。");
     }
+
+    // --- WAV形式への変換処理 (前回と同じ) ---
+    const sampleRate = 24000;
+    const pcmData = Buffer.from(audioBase64, "base64");
+    const pcm_i16 = new Int16Array(
+      pcmData.buffer,
+      pcmData.byteOffset,
+      pcmData.length / Int16Array.BYTES_PER_ELEMENT
+    );
+    const pcm_f32 = new Float32Array(pcm_i16.length);
+    for (let i = 0; i < pcm_i16.length; i++) {
+      pcm_f32[i] = pcm_i16[i] / 32768.0;
+    }
+    const wavData = await WavEncoder.encode({
+      sampleRate: sampleRate,
+      channelData: [pcm_f32],
+    });
+    const wavBase64 = Buffer.from(wavData).toString("base64");
 
     // --- 3. レスポンスを返す ---
     return NextResponse.json({
       textResponse: textResponse,
-      audioData: Buffer.from(audioData).toString("base64"),
+      audioData: wavBase64,
     });
   } catch (error: unknown) {
     console.error("APIルートでエラーが発生しました:", error);

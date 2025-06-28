@@ -121,7 +121,8 @@ type Message = {
 
 const playAudioFromBase64 = (base64Data: string) => {
   if (!base64Data) return;
-  const audioSrc = `data:audio/mp3;base64,${base64Data}`;
+  // ★★★ MIMEタイプを "audio/mp3" から "audio/wav" に変更 ★★★
+  const audioSrc = `data:audio/wav;base64,${base64Data}`;
   const audio = new Audio(audioSrc);
   audio.play().catch((e) => console.error("音声の再生に失敗しました:", e));
 };
@@ -210,7 +211,7 @@ export default function ChatPage() {
       {
         id: 0,
         role: "ai",
-        text: "うん、わかったよ！はじめまして、わたしは「ひかり」。これから、よろしくね！",
+        text: "うん、わかったよ！はじめまして、わたしは「ニア」。これから、よろしくね！",
       },
     ]);
     localStorage.removeItem(CHAT_HISTORY_KEY);
@@ -224,7 +225,7 @@ export default function ChatPage() {
         <header className="p-4 text-center border-b border-white/30 flex justify-between items-center">
           <div className="w-10 h-10"></div>
           <h1 className="text-xl font-bold text-gray-700 tracking-wider">
-            ひかりとおはなし
+            ニアとおはなし
           </h1>
           <motion.div
             whileTap={{ scale: 0.9 }}
