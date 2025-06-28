@@ -1,13 +1,9 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai"; // ★★★ Type をインポート ★★★
 import { NextRequest, NextResponse } from "next/server";
 import WavEncoder from "wav-encoder";
-// ★★★ 1. constants.ts からプロンプトをインポート ★★★
-import { aiPrompt } from "./constant";
+import { aiPrompt } from "./constant"; // プロンプトも少し変更します
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
-
-// systemInstructionの代わりにインポートしたaiPromptを使用します
-const systemInstruction = aiPrompt;
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,38 +16,60 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // --- 1. テキスト生成 (Chat) ---
+    // --- 1. テキストと感情を生成 (Chat with Structured Output) ---
     const chatResult = await genAI.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
         {
           role: "user",
-          parts: [{ text: systemInstruction + "\n\n" + message }],
+          parts: [{ text: aiPrompt + "\n\n" + message }],
         },
       ],
+      // ★★★ 構造化出力を定義 ★★★
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            emotion: {
+              type: Type.STRING,
+              description: "応答内容に最も合う感情をリストから選択したもの。",
+            },
+            responseText: {
+              type: Type.STRING,
+              description: "ユーザーへの応答メッセージ本文。",
+            },
+          },
+          required: ["emotion", "responseText"],
+        },
+      },
     });
-    const textResponse = chatResult.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    if (!textResponse) {
-      throw new Error("AIから有効なテキスト応答を取得できませんでした。");
+    // APIからの応答は、スキーマに基づいて構造化されたテキストになっています
+    const rawResponse = chatResult.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawResponse) {
+      throw new Error("AIから有効な応答を取得できませんでした。");
+    }
+
+    // JSONテキストをパースしてオブジェクトとして利用
+    const aiResponse = JSON.parse(rawResponse);
+    const { emotion, responseText } = aiResponse;
+
+    if (!responseText || !emotion) {
+      throw new Error("AIからの応答形式が正しくありません。");
     }
 
     // --- 2. 音声生成 (Gemini API TTS) ---
-
-    // ★★★ 2. 音声のスタイルを指示するプロンプトを作成 ★★★
-    // 'ニア'の性格に合わせて「優しく、穏やかなトーンで」という指示を追加します。
-    const voiceStylePrompt = `優しく、穏やかなトーンで話してください：${textResponse}`;
-
+    // (この部分のロジックに変更はありません)
     const ttsResponse = await genAI.models.generateContent({
       model: "gemini-2.5-pro-preview-tts",
-      // ★★★ 3. スタイル指示付きのテキストを渡す ★★★
-      contents: [{ parts: [{ text: voiceStylePrompt }] }],
+      contents: [{ parts: [{ text: responseText }] }],
       config: {
         responseModalities: ["AUDIO"],
         speechConfig: {
           voiceConfig: {
             // "Sulafat" は「温かい」声と説明されているので、キャラクターに合うかもしれません。
-            prebuiltVoiceConfig: { voiceName: "Sulafat" },
+            prebuiltVoiceConfig: { voiceName: "Zephyr" },
           },
         },
       },
@@ -64,7 +82,7 @@ export async function POST(req: NextRequest) {
       throw new Error("Gemini APIから有効な音声データが返されませんでした。");
     }
 
-    // --- WAV形式への変換処理 (前回と同じ) ---
+    // --- WAV形式への変換処理 (変更なし) ---
     const sampleRate = 24000;
     const pcmData = Buffer.from(audioBase64, "base64");
     const pcm_i16 = new Int16Array(
@@ -84,7 +102,8 @@ export async function POST(req: NextRequest) {
 
     // --- 3. レスポンスを返す ---
     return NextResponse.json({
-      textResponse: textResponse,
+      emotion: emotion,
+      textResponse: responseText,
       audioData: wavBase64,
     });
   } catch (error: unknown) {
