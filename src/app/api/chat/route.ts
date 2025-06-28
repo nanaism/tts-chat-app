@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
 
     // --- 1. テキスト生成 (Chat) ---
     const chatResult = await genAI.models.generateContent({
-      model: "gemini-2.5-flash-lite-preview-06-17",
+      model: "gemini-2.5-pro",
       contents: [
         {
           role: "user",
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     const voiceStylePrompt = `優しく、穏やかなトーンで話してください：${textResponse}`;
 
     const ttsResponse = await genAI.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
+      model: "gemini-2.5-pro-preview-tts",
       // ★★★ 3. スタイル指示付きのテキストを渡す ★★★
       contents: [{ parts: [{ text: voiceStylePrompt }] }],
       config: {
