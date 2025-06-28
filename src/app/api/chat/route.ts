@@ -69,8 +69,8 @@ export async function POST(req: NextRequest) {
         speechConfig: {
           voiceConfig: {
             // "Sulafat" は「温かい」声と説明されているので、キャラクターに合うかもしれません。
-            // prebuiltVoiceConfig: { voiceName: "Zephyr" },
-            prebuiltVoiceConfig: { voiceName: "Sulafat" },
+            prebuiltVoiceConfig: { voiceName: "Zephyr" },
+            // prebuiltVoiceConfig: { voiceName: "Sulafat" },
           },
         },
       },
