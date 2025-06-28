@@ -9,7 +9,7 @@ import {
   VRMLoaderPlugin,
 } from "@pixiv/three-vrm";
 import { Html, OrbitControls } from "@react-three/drei";
-import { Canvas, useFrame, useLoader } from "@react-three/fiber";
+import { Canvas, ThreeEvent, useFrame, useLoader } from "@react-three/fiber";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Loader,
@@ -26,6 +26,7 @@ import {
   memo,
   Suspense,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -49,6 +50,91 @@ type Message = {
 };
 type Emotion = VRMExpressionPresetName | "thinking";
 
+const TapEffect = ({
+  id,
+  position,
+  onComplete,
+}: {
+  id: number;
+  position: THREE.Vector3;
+  onComplete: (id: number) => void;
+}) => {
+  const groupRef = useRef<THREE.Group>(null!);
+
+  const particles = useMemo(() => {
+    const particleCount = 20;
+    const initialSpeed = 0.4;
+    const lifetime = 0.4;
+
+    return Array.from({ length: particleCount }).map(() => {
+      const velocity = new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2
+      )
+        .normalize()
+        .multiplyScalar(initialSpeed * (Math.random() * 0.5 + 0.5));
+
+      const particleLifetime = lifetime * (Math.random() * 0.7 + 0.3);
+
+      return {
+        velocity,
+        color: new THREE.Color().setHSL(Math.random(), 1.0, 0.5),
+        lifetime: particleLifetime,
+        initialLifetime: particleLifetime,
+        scale: Math.random() * 0.04 + 0.02,
+        currentPosition: new THREE.Vector3(),
+      };
+    });
+  }, []);
+
+  useFrame((state, delta) => {
+    if (!groupRef.current) return;
+    let allParticlesDead = true;
+
+    particles.forEach((p, i) => {
+      const mesh = groupRef.current.children[i] as THREE.Mesh;
+      if (!mesh || p.lifetime <= 0) {
+        if (mesh) mesh.visible = false;
+        return;
+      }
+
+      allParticlesDead = false;
+      p.lifetime -= delta;
+
+      p.velocity.multiplyScalar(0.95);
+      p.velocity.y -= 9.8 * delta * 0.15;
+
+      p.currentPosition.add(p.velocity.clone().multiplyScalar(delta));
+      mesh.position.copy(p.currentPosition);
+
+      const lifePercent = Math.max(0, p.lifetime / p.initialLifetime);
+      const currentScale = p.scale * Math.sin(lifePercent * Math.PI);
+      mesh.scale.set(currentScale, currentScale, currentScale);
+    });
+
+    if (allParticlesDead) {
+      onComplete(id);
+    }
+  });
+
+  return (
+    <group position={position} ref={groupRef}>
+      {particles.map((p, i) => (
+        <mesh key={i}>
+          <sphereGeometry args={[0.1, 6, 6]} />
+          <meshBasicMaterial
+            color={p.color}
+            transparent
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+};
+
 const ModelLoader = () => {
   return (
     <Html center>
@@ -60,26 +146,29 @@ const ModelLoader = () => {
   );
 };
 
-// ========= 【ここから修正】VRMViewer コンポーネント (自然なまばたき実装) =========
 const VRMViewer = memo(
   ({
     emotion,
     analyser,
+    isSpeaking,
+    onHeadClick,
   }: {
     emotion: Emotion;
     analyser: AnalyserNode | null;
+    isSpeaking: boolean;
+    onHeadClick: (event: ThreeEvent<MouseEvent>) => void;
   }) => {
     const gltf = useLoader(GLTFLoader, "/avatar.vrm", (loader) => {
       loader.register((parser: GLTFParser) => new VRMLoaderPlugin(parser));
     });
     const vrmRef = useRef<VRM | null>(null);
     const restingArmRad = useRef(Math.PI * (-70 / 180));
+    const interactionRef = useRef<THREE.Mesh>(null);
 
-    // 【ここから追加】まばたきの状態を管理するためのuseRef
     const blinkState = useRef({
       isBlinking: false,
       lastBlinkTime: 0,
-      nextBlinkDelay: 3.0, // 最初のまばたきまでの時間
+      nextBlinkDelay: 3.0,
     });
 
     useEffect(() => {
@@ -110,20 +199,29 @@ const VRMViewer = memo(
       const manager = vrm.expressionManager;
       const humanoid = vrm.humanoid;
       const clockTime = state.clock.elapsedTime;
+      const head = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Head);
+      const neck = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Neck);
+      const spine = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Spine);
+      const chest = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Chest);
 
-      // 【ここからが新しいまばたき処理】
+      if (head && interactionRef.current) {
+        const headPosition = new THREE.Vector3();
+        head.getWorldPosition(headPosition);
+        interactionRef.current.position.copy(headPosition);
+        interactionRef.current.position.y += 0.15;
+      }
+
       let blinkValue = 0;
       const blinkManager = blinkState.current;
-      const blinkDuration = 0.6; // 瞬きの速さ
+      const blinkDuration = 0.1;
 
       if (blinkManager.isBlinking) {
         const progress =
           (clockTime - blinkManager.lastBlinkTime) / blinkDuration;
         if (progress >= 1) {
           blinkManager.isBlinking = false;
-          blinkValue = 0; // 完全に開く
+          blinkValue = 0;
         } else {
-          // sinカーブで 0 -> 1 -> 0 の滑らかな動きを生成
           blinkValue = Math.sin(progress * Math.PI);
         }
       } else {
@@ -133,27 +231,56 @@ const VRMViewer = memo(
         ) {
           blinkManager.isBlinking = true;
           blinkManager.lastBlinkTime = clockTime;
-          // 次のまばたきを2〜7秒後のランダムな時間に設定
-          blinkManager.nextBlinkDelay = 3.0 + Math.random() * 4.0;
+          blinkManager.nextBlinkDelay = 2.0 + Math.random() * 5.0;
         }
       }
       manager.setValue(VRMExpressionPresetName.Blink, blinkValue);
-      // 【ここまでが新しいまばたき処理】
-
-      const chest = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Chest);
-      if (chest) {
-        chest.rotation.x = Math.sin(clockTime * 0.8) * 0.01;
-      }
 
       if (emotion === "thinking") {
-        const head = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Head);
+        if (gltf.scene)
+          gltf.scene.position.y = THREE.MathUtils.lerp(
+            gltf.scene.position.y,
+            -0.1,
+            delta * 3.0
+          );
         if (head) {
+          head.rotation.x = THREE.MathUtils.lerp(
+            head.rotation.x,
+            0,
+            delta * 2.0
+          );
+          head.rotation.y = THREE.MathUtils.lerp(
+            head.rotation.y,
+            0,
+            delta * 2.0
+          );
           head.rotation.z = THREE.MathUtils.lerp(
             head.rotation.z,
             Math.PI / 18,
             delta * 3.0
           );
         }
+        if (neck)
+          neck.rotation.y = THREE.MathUtils.lerp(
+            neck.rotation.y,
+            0,
+            delta * 2.0
+          );
+        if (spine)
+          spine.rotation.y = THREE.MathUtils.lerp(
+            spine.rotation.y,
+            0,
+            delta * 2.0
+          );
+        if (chest)
+          chest.rotation.x = THREE.MathUtils.lerp(
+            chest.rotation.x,
+            0,
+            delta * 2.0
+          );
+
+        // ★★★【ここから修正】「考え中」の表情を笑顔から元の「うーん」という表情に戻しました ★★★
+        manager.setValue(VRMExpressionPresetName.Happy, 0); // 笑顔をリセット
         manager.setValue(
           VRMExpressionPresetName.Neutral,
           THREE.MathUtils.lerp(
@@ -171,29 +298,14 @@ const VRMViewer = memo(
           )
         );
         manager.setValue(VRMExpressionPresetName.Aa, 0);
+        // ★★★【ここまで修正】 ★★★
       } else {
-        const head = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Head);
-        if (head) {
+        if (head)
           head.rotation.z = THREE.MathUtils.lerp(
             head.rotation.z,
             0,
             delta * 3.0
           );
-        }
-        for (const preset of Object.values(VRMExpressionPresetName)) {
-          // Blinkは専用ロジックで制御するのでスキップ
-          if (
-            typeof preset !== "string" ||
-            preset === VRMExpressionPresetName.Blink
-          )
-            continue;
-          const targetWeight = preset === emotion ? 1.0 : 0.0;
-          const currentWeight = manager.getValue(preset) ?? 0.0;
-          manager.setValue(
-            preset,
-            THREE.MathUtils.lerp(currentWeight, targetWeight, delta * 10.0)
-          );
-        }
 
         const rightUpperArm = humanoid.getNormalizedBoneNode(
           VRMHumanBoneName.RightUpperArm
@@ -214,7 +326,21 @@ const VRMViewer = memo(
           );
         }
 
-        if (analyser) {
+        for (const preset of Object.values(VRMExpressionPresetName)) {
+          if (
+            typeof preset !== "string" ||
+            preset === VRMExpressionPresetName.Blink
+          )
+            continue;
+          const targetWeight = preset === emotion ? 1.0 : 0.0;
+          const currentWeight = manager.getValue(preset) ?? 0.0;
+          manager.setValue(
+            preset,
+            THREE.MathUtils.lerp(currentWeight, targetWeight, delta * 10.0)
+          );
+        }
+
+        if (isSpeaking && analyser) {
           const data = new Uint8Array(analyser.frequencyBinCount);
           analyser.getByteFrequencyData(data);
           const volume = data.reduce((a, b) => a + b, 0) / data.length;
@@ -222,27 +348,146 @@ const VRMViewer = memo(
             VRMExpressionPresetName.Aa,
             Math.min(1.0, (volume / 100) ** 1.5)
           );
+
+          const lerpFactor = delta * 2.0;
+          switch (emotion) {
+            case VRMExpressionPresetName.Happy:
+              if (gltf.scene)
+                gltf.scene.position.y = THREE.MathUtils.lerp(
+                  gltf.scene.position.y,
+                  -0.1 + Math.abs(Math.sin(clockTime * 2.5) * 0.02),
+                  lerpFactor
+                );
+              if (spine)
+                spine.rotation.y = THREE.MathUtils.lerp(
+                  spine.rotation.y,
+                  Math.sin(clockTime * 1.8) * 0.15,
+                  lerpFactor
+                );
+              if (head)
+                head.rotation.x = THREE.MathUtils.lerp(
+                  head.rotation.x,
+                  Math.sin(clockTime * 1.8) * 0.08,
+                  lerpFactor
+                );
+              break;
+            case VRMExpressionPresetName.Sad:
+              if (chest)
+                chest.rotation.x = THREE.MathUtils.lerp(
+                  chest.rotation.x,
+                  0.15,
+                  lerpFactor
+                );
+              if (head)
+                head.rotation.x = THREE.MathUtils.lerp(
+                  head.rotation.x,
+                  0.1,
+                  lerpFactor
+                );
+              break;
+            default:
+              if (gltf.scene)
+                gltf.scene.position.y = THREE.MathUtils.lerp(
+                  gltf.scene.position.y,
+                  -0.1 + Math.sin(clockTime * 0.5) * 0.01,
+                  lerpFactor
+                );
+              if (spine)
+                spine.rotation.y = THREE.MathUtils.lerp(
+                  spine.rotation.y,
+                  0,
+                  lerpFactor
+                );
+              if (chest)
+                chest.rotation.x = THREE.MathUtils.lerp(
+                  chest.rotation.x,
+                  0,
+                  lerpFactor
+                );
+              if (head)
+                head.rotation.x = THREE.MathUtils.lerp(
+                  head.rotation.x,
+                  0,
+                  lerpFactor
+                );
+              break;
+          }
         } else {
           manager.setValue(VRMExpressionPresetName.Aa, 0);
+
+          const targetFloatY = -0.1 + Math.sin(clockTime * 0.5) * 0.012;
+          const targetSpineY =
+            Math.sin(clockTime * 0.4) * 0.15 + Math.sin(clockTime * 0.25) * 0.1;
+          const targetNeckY =
+            Math.sin(clockTime * 0.6) * 0.3 + Math.sin(clockTime * 0.8) * 0.2;
+          const targetHeadX = Math.sin(clockTime * 0.55) * 0.08;
+
+          const lerpFactor = delta * 1.5;
+          if (gltf.scene)
+            gltf.scene.position.y = THREE.MathUtils.lerp(
+              gltf.scene.position.y,
+              targetFloatY,
+              lerpFactor
+            );
+          if (spine)
+            spine.rotation.y = THREE.MathUtils.lerp(
+              spine.rotation.y,
+              targetSpineY,
+              lerpFactor
+            );
+          if (neck)
+            neck.rotation.y = THREE.MathUtils.lerp(
+              neck.rotation.y,
+              targetNeckY,
+              lerpFactor
+            );
+          if (head)
+            head.rotation.x = THREE.MathUtils.lerp(
+              head.rotation.x,
+              targetHeadX,
+              lerpFactor
+            );
         }
       }
-
       vrm.update(delta);
     });
 
-    return <primitive object={gltf.scene} position={[0, -0.1, 0]} />;
+    return (
+      <>
+        <primitive object={gltf.scene} position={[0, -0.1, 0]} />
+        <mesh
+          ref={interactionRef}
+          onClick={(e) => {
+            e.stopPropagation();
+            onHeadClick(e);
+          }}
+          onPointerOver={() => (document.body.style.cursor = "pointer")}
+          onPointerOut={() => (document.body.style.cursor = "auto")}
+        >
+          <sphereGeometry args={[0.25, 16, 16]} />
+          <meshBasicMaterial visible={false} />
+        </mesh>
+      </>
+    );
   }
 );
 VRMViewer.displayName = "VRMViewer";
-// ========= 【ここまで修正】VRMViewer コンポーネント =========
 
 const VRMCanvas = memo(
   ({
     emotion,
     analyser,
+    isSpeaking,
+    onHeadClick,
+    effects,
+    onEffectComplete,
   }: {
     emotion: Emotion;
     analyser: AnalyserNode | null;
+    isSpeaking: boolean;
+    onHeadClick: (event: ThreeEvent<MouseEvent>) => void;
+    effects: Array<{ id: number; position: THREE.Vector3 }>;
+    onEffectComplete: (id: number) => void;
   }) => {
     return (
       <Canvas
@@ -260,7 +505,20 @@ const VRMCanvas = memo(
           shadow-mapSize-height={1024}
         />
         <Suspense fallback={<ModelLoader />}>
-          <VRMViewer emotion={emotion} analyser={analyser} />
+          <VRMViewer
+            emotion={emotion}
+            analyser={analyser}
+            isSpeaking={isSpeaking}
+            onHeadClick={onHeadClick}
+          />
+          {effects.map((effect) => (
+            <TapEffect
+              key={effect.id}
+              id={effect.id}
+              position={effect.position}
+              onComplete={onEffectComplete}
+            />
+          ))}
         </Suspense>
         <OrbitControls
           target={[0, 1.2, 0]}
@@ -573,9 +831,21 @@ export default function ChatPage() {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [messages, setMessages] = useState<Message[]>([initialMessage]);
   const [isLoading, setIsLoading] = useState(false);
-  const [currentEmotion, setCurrentEmotion] = useState<Emotion>("neutral");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [liveMessage, setLiveMessage] = useState<Message | null>(null);
+
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [baseEmotion, setBaseEmotion] = useState<Emotion>("neutral");
+  const [interactionEmotion, setInteractionEmotion] = useState<Emotion | null>(
+    null
+  );
+  const interactionTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [effects, setEffects] = useState<
+    Array<{ id: number; position: THREE.Vector3 }>
+  >([]);
+
+  const currentEmotion = interactionEmotion || baseEmotion;
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -645,30 +915,37 @@ export default function ChatPage() {
           source.buffer = audioBuffer;
           source.connect(analyser);
           source.start(0);
+          setIsSpeaking(true);
           audioSourceRef.current = source;
           source.onended = () => {
-            setCurrentEmotion("neutral");
+            setBaseEmotion("neutral");
             setLiveMessage(null);
             audioSourceRef.current = null;
+            setIsSpeaking(false);
           };
         })
         .catch((e) => {
           console.error("Error decoding audio data:", e);
-          setCurrentEmotion("neutral");
+          setBaseEmotion("neutral");
           setLiveMessage(null);
+          setIsSpeaking(false);
         });
     } catch (e) {
-      // 【ここを修正】catchブロックに中括弧を追加
       console.error("Error playing audio:", e);
-      setCurrentEmotion("neutral");
+      setBaseEmotion("neutral");
       setLiveMessage(null);
+      setIsSpeaking(false);
     }
   };
 
   const handleSendMessage = async (input: string) => {
     if (isLoading) return;
+
+    if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
+    setInteractionEmotion(null);
+
     setIsLoading(true);
-    setCurrentEmotion("thinking");
+    setBaseEmotion("thinking");
 
     const userMessage: Message = { id: Date.now(), role: "user", text: input };
     const newHistory = [...messages, userMessage];
@@ -695,7 +972,7 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, aiMessage]);
       setLiveMessage(aiMessage);
 
-      setCurrentEmotion((data.emotion as VRMExpressionPresetName) || "happy");
+      setBaseEmotion((data.emotion as VRMExpressionPresetName) || "happy");
       playAudio(data.audioData);
 
       const finalHistory = [
@@ -713,21 +990,43 @@ export default function ChatPage() {
       };
       setMessages((prev) => [...prev, errorMsg]);
       setLiveMessage(errorMsg);
-      setCurrentEmotion("sad");
+      setBaseEmotion("sad");
       setTimeout(() => {
         setLiveMessage(null);
-        setCurrentEmotion("neutral");
+        setBaseEmotion("neutral");
       }, 4000);
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleHeadClick = (event: ThreeEvent<MouseEvent>) => {
+    setEffects((prev) => [
+      ...prev,
+      { id: Date.now(), position: event.point.clone() },
+    ]);
+
+    if (isLoading || audioSourceRef.current) return;
+    if (interactionTimerRef.current) {
+      clearTimeout(interactionTimerRef.current);
+    }
+    setInteractionEmotion("happy");
+    interactionTimerRef.current = setTimeout(() => {
+      setInteractionEmotion(null);
+      interactionTimerRef.current = null;
+    }, 2500);
+  };
+
+  const handleEffectComplete = (id: number) => {
+    setEffects((prev) => prev.filter((effect) => effect.id !== id));
+  };
+
   const handleReset = () => {
     if (audioSourceRef.current) audioSourceRef.current.stop();
+    setIsSpeaking(false);
     setMessages([initialMessage]);
     localStorage.removeItem(CHAT_HISTORY_KEY);
-    setCurrentEmotion("neutral");
+    setBaseEmotion("neutral");
     setIsHistoryOpen(false);
     setLiveMessage(null);
   };
@@ -740,7 +1039,6 @@ export default function ChatPage() {
         {!isUnlocked && <UnlockScreen onUnlock={handleUnlock} />}
       </AnimatePresence>
 
-      {/* 【ここを修正】破損していたコードを完全な状態に修正 */}
       {isUnlocked && (
         <div className="w-full h-full flex flex-col">
           <header className="w-full p-4 flex-shrink-0 bg-white/30 backdrop-blur-lg z-10 flex items-center justify-between">
@@ -752,6 +1050,10 @@ export default function ChatPage() {
               <VRMCanvas
                 emotion={currentEmotion}
                 analyser={analyserRef.current}
+                isSpeaking={isSpeaking}
+                onHeadClick={handleHeadClick}
+                effects={effects}
+                onEffectComplete={handleEffectComplete}
               />
             </div>
 
