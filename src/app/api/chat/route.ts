@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
 
     // --- 1. テキスト生成 (Chat) ---
     const chatResult = await genAI.models.generateContent({
-      model: "gemini-1.5-pro-latest", // 安定版のProモデルを使用
+      model: "gemini-2.5-flash-lite-preview-06-17",
       contents: [
         {
           role: "user",
@@ -75,16 +75,19 @@ export async function POST(req: NextRequest) {
 
     // --- 2. 音声生成 ---
     const request = {
-      input: { text: textResponse },
+      audioConfig: {
+        // ▼▼▼▼▼▼▼▼▼▼【修正点】▼▼▼▼▼▼▼▼▼▼
+        audioEncoding: "LINEAR16" as const,
+        // ▲▲▲▲▲▲▲▲▲▲【修正点】▲▲▲▲▲▲▲▲▲▲
+        pitch: 0,
+        speakingRate: 1,
+      },
+      input: {
+        text: textResponse,
+      },
       voice: {
         languageCode: "ja-JP",
-        name: "ja-JP-Neural2-B",
-      },
-      audioConfig: {
-        audioEncoding: "MP3" as const, // MP3に戻してデータ量を節約
-        speakingRate: 0.95,
-        pitch: 0.5,
-        volumeGainDb: 1.6,
+        name: "ja-JP-Chirp3-HD-Sulafat",
       },
     };
 
