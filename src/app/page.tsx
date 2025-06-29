@@ -12,8 +12,8 @@ import { Html, OrbitControls } from "@react-three/drei";
 import { Canvas, ThreeEvent, useFrame, useLoader } from "@react-three/fiber";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  History,
   Loader,
-  MessageSquare,
   Play,
   RotateCw,
   Send,
@@ -165,6 +165,8 @@ const VRMViewer = memo(
     const restingArmRad = useRef(Math.PI * (-70 / 180));
     const interactionRef = useRef<THREE.Mesh>(null);
 
+    const startTimeRef = useRef(0);
+
     const blinkState = useRef({
       isBlinking: false,
       lastBlinkTime: 0,
@@ -175,6 +177,16 @@ const VRMViewer = memo(
       if (!gltf.userData.vrm) return;
       const vrm = gltf.userData.vrm;
       vrmRef.current = vrm;
+
+      vrm.humanoid
+        .getNormalizedBoneNode(VRMHumanBoneName.Head)!
+        .rotation.set(0, 0, 0);
+      vrm.humanoid
+        .getNormalizedBoneNode(VRMHumanBoneName.Neck)!
+        .rotation.set(0, 0, 0);
+      vrm.humanoid
+        .getNormalizedBoneNode(VRMHumanBoneName.Spine)!
+        .rotation.set(0, 0, 0);
 
       const rightUpperArm = vrm.humanoid?.getNormalizedBoneNode(
         VRMHumanBoneName.RightUpperArm
@@ -204,6 +216,11 @@ const VRMViewer = memo(
       const spine = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Spine);
       const chest = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Chest);
 
+      if (startTimeRef.current === 0) {
+        startTimeRef.current = clockTime;
+      }
+      const elapsedTime = clockTime - startTimeRef.current;
+
       if (head && interactionRef.current) {
         const headPosition = new THREE.Vector3();
         head.getWorldPosition(headPosition);
@@ -217,7 +234,7 @@ const VRMViewer = memo(
 
       if (blinkManager.isBlinking) {
         const progress =
-          (clockTime - blinkManager.lastBlinkTime) / blinkDuration;
+          (elapsedTime - blinkManager.lastBlinkTime) / blinkDuration;
         if (progress >= 1) {
           blinkManager.isBlinking = false;
           blinkValue = 0;
@@ -226,11 +243,11 @@ const VRMViewer = memo(
         }
       } else {
         if (
-          clockTime - blinkManager.lastBlinkTime >
+          elapsedTime - blinkManager.lastBlinkTime >
           blinkManager.nextBlinkDelay
         ) {
           blinkManager.isBlinking = true;
-          blinkManager.lastBlinkTime = clockTime;
+          blinkManager.lastBlinkTime = elapsedTime;
           blinkManager.nextBlinkDelay = 2.0 + Math.random() * 5.0;
         }
       }
@@ -279,8 +296,7 @@ const VRMViewer = memo(
             delta * 2.0
           );
 
-        // ★★★【ここから修正】「考え中」の表情を笑顔から元の「うーん」という表情に戻しました ★★★
-        manager.setValue(VRMExpressionPresetName.Happy, 0); // 笑顔をリセット
+        manager.setValue(VRMExpressionPresetName.Happy, 0);
         manager.setValue(
           VRMExpressionPresetName.Neutral,
           THREE.MathUtils.lerp(
@@ -298,7 +314,6 @@ const VRMViewer = memo(
           )
         );
         manager.setValue(VRMExpressionPresetName.Aa, 0);
-        // ★★★【ここまで修正】 ★★★
       } else {
         if (head)
           head.rotation.z = THREE.MathUtils.lerp(
@@ -355,19 +370,19 @@ const VRMViewer = memo(
               if (gltf.scene)
                 gltf.scene.position.y = THREE.MathUtils.lerp(
                   gltf.scene.position.y,
-                  -0.1 + Math.abs(Math.sin(clockTime * 2.5) * 0.02),
+                  -0.1 + Math.abs(Math.sin(elapsedTime * 2.5) * 0.02),
                   lerpFactor
                 );
               if (spine)
                 spine.rotation.y = THREE.MathUtils.lerp(
                   spine.rotation.y,
-                  Math.sin(clockTime * 1.8) * 0.15,
+                  Math.sin(elapsedTime * 1.8) * 0.15,
                   lerpFactor
                 );
               if (head)
                 head.rotation.x = THREE.MathUtils.lerp(
                   head.rotation.x,
-                  Math.sin(clockTime * 1.8) * 0.08,
+                  Math.sin(elapsedTime * 1.8) * 0.08,
                   lerpFactor
                 );
               break;
@@ -389,7 +404,7 @@ const VRMViewer = memo(
               if (gltf.scene)
                 gltf.scene.position.y = THREE.MathUtils.lerp(
                   gltf.scene.position.y,
-                  -0.1 + Math.sin(clockTime * 0.5) * 0.01,
+                  -0.1 + Math.sin(elapsedTime * 0.5) * 0.01,
                   lerpFactor
                 );
               if (spine)
@@ -415,38 +430,70 @@ const VRMViewer = memo(
         } else {
           manager.setValue(VRMExpressionPresetName.Aa, 0);
 
-          const targetFloatY = -0.1 + Math.sin(clockTime * 0.5) * 0.012;
-          const targetSpineY =
-            Math.sin(clockTime * 0.4) * 0.15 + Math.sin(clockTime * 0.25) * 0.1;
-          const targetNeckY =
-            Math.sin(clockTime * 0.6) * 0.3 + Math.sin(clockTime * 0.8) * 0.2;
-          const targetHeadX = Math.sin(clockTime * 0.55) * 0.08;
-
+          const INITIAL_DELAY = 1.0;
           const lerpFactor = delta * 1.5;
-          if (gltf.scene)
-            gltf.scene.position.y = THREE.MathUtils.lerp(
-              gltf.scene.position.y,
-              targetFloatY,
-              lerpFactor
-            );
-          if (spine)
-            spine.rotation.y = THREE.MathUtils.lerp(
-              spine.rotation.y,
-              targetSpineY,
-              lerpFactor
-            );
-          if (neck)
-            neck.rotation.y = THREE.MathUtils.lerp(
-              neck.rotation.y,
-              targetNeckY,
-              lerpFactor
-            );
-          if (head)
-            head.rotation.x = THREE.MathUtils.lerp(
-              head.rotation.x,
-              targetHeadX,
-              lerpFactor
-            );
+
+          if (elapsedTime < INITIAL_DELAY) {
+            if (gltf.scene)
+              gltf.scene.position.y = THREE.MathUtils.lerp(
+                gltf.scene.position.y,
+                -0.1,
+                lerpFactor
+              );
+            if (spine)
+              spine.rotation.y = THREE.MathUtils.lerp(
+                spine.rotation.y,
+                0,
+                lerpFactor
+              );
+            if (neck)
+              neck.rotation.y = THREE.MathUtils.lerp(
+                neck.rotation.y,
+                0,
+                lerpFactor
+              );
+            if (head)
+              head.rotation.x = THREE.MathUtils.lerp(
+                head.rotation.x,
+                0,
+                lerpFactor
+              );
+          } else {
+            const animationTime = elapsedTime - INITIAL_DELAY;
+            const targetFloatY = -0.1 + Math.sin(animationTime * 0.5) * 0.012;
+            const targetSpineY =
+              Math.sin(animationTime * 0.4) * 0.15 +
+              Math.sin(animationTime * 0.25) * 0.1;
+            const targetNeckY =
+              Math.sin(animationTime * 0.6) * 0.3 +
+              Math.sin(animationTime * 0.8) * 0.2;
+            const targetHeadX = Math.sin(animationTime * 0.55) * 0.08;
+
+            if (gltf.scene)
+              gltf.scene.position.y = THREE.MathUtils.lerp(
+                gltf.scene.position.y,
+                targetFloatY,
+                lerpFactor
+              );
+            if (spine)
+              spine.rotation.y = THREE.MathUtils.lerp(
+                spine.rotation.y,
+                targetSpineY,
+                lerpFactor
+              );
+            if (neck)
+              neck.rotation.y = THREE.MathUtils.lerp(
+                neck.rotation.y,
+                targetNeckY,
+                lerpFactor
+              );
+            if (head)
+              head.rotation.x = THREE.MathUtils.lerp(
+                head.rotation.x,
+                targetHeadX,
+                lerpFactor
+              );
+          }
         }
       }
       vrm.update(delta);
@@ -662,7 +709,7 @@ ChatHistoryOverlay.displayName = "ChatHistoryOverlay";
 
 const LiveMessageBubble = memo(({ message }: { message: Message }) => {
   return (
-    <div className="absolute bottom-24 md:bottom-28 left-0 right-0 w-full flex justify-center items-center p-4 pointer-events-none z-10">
+    <div className="absolute inset-x-0 bottom-0 p-4 pb-6 flex flex-col items-center justify-end pointer-events-none z-10">
       <motion.div
         layout
         initial={{ opacity: 0, y: 20, scale: 0.9 }}
@@ -673,7 +720,7 @@ const LiveMessageBubble = memo(({ message }: { message: Message }) => {
           transition: { type: "spring", damping: 20, stiffness: 300 },
         }}
         exit={{ opacity: 0, y: 10, scale: 0.9, transition: { duration: 0.2 } }}
-        className="relative max-w-xs md:max-w-md bg-white/80 backdrop-blur-lg rounded-2xl p-4 text-center text-gray-800 shadow-xl pointer-events-auto"
+        className="relative max-w-sm md:max-w-md bg-white/80 backdrop-blur-lg rounded-2xl p-4 text-center text-gray-800 shadow-xl pointer-events-auto"
       >
         <div
           className="absolute left-1/2 -top-2 w-4 h-4 bg-inherit transform -translate-x-1/2 rotate-45"
@@ -712,11 +759,9 @@ const ChatInputFooter = memo(
   ({
     onSendMessage,
     isLoading,
-    onHistoryToggle,
   }: {
     onSendMessage: (input: string) => void;
     isLoading: boolean;
-    onHistoryToggle: () => void;
   }) => {
     const [input, setInput] = useState("");
     const handleSend = () => {
@@ -735,15 +780,6 @@ const ChatInputFooter = memo(
     return (
       <footer className="p-3 bg-white/40 backdrop-blur-lg border-t flex-shrink-0 z-10">
         <div className="flex w-full items-center space-x-3">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onHistoryToggle}
-            className="rounded-full text-gray-600"
-            aria-label="履歴を表示"
-          >
-            <MessageSquare size={24} />
-          </Button>
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -790,6 +826,7 @@ const ChatInputFooter = memo(
 );
 ChatInputFooter.displayName = "ChatInputFooter";
 
+// ★★★【ここから修正】アンロック画面を元のデザインに戻しました ★★★
 const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
   <div className="absolute inset-0 bg-gradient-to-br from-sky-100 via-rose-100 to-violet-200 flex flex-col justify-center items-center z-50 p-4 text-center">
     <motion.div
@@ -818,6 +855,7 @@ const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
   </div>
 ));
 UnlockScreen.displayName = "UnlockScreen";
+// ★★★【ここまで修正】 ★★★
 
 const initialMessage: Message = {
   id: 0,
@@ -825,7 +863,7 @@ const initialMessage: Message = {
   text: "こんにちは！わたしはニア。おはなししよう！",
   emotion: "neutral",
 };
-const CHAT_HISTORY_KEY = "nia-chat-history";
+const CHAT_HISTORY_KEY = "near-chat-history";
 
 export default function ChatPage() {
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -1006,7 +1044,7 @@ export default function ChatPage() {
       { id: Date.now(), position: event.point.clone() },
     ]);
 
-    if (isLoading || audioSourceRef.current) return;
+    if (isSpeaking) return;
     if (interactionTimerRef.current) {
       clearTimeout(interactionTimerRef.current);
     }
@@ -1033,16 +1071,29 @@ export default function ChatPage() {
 
   return (
     <main
-      className={`w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-gradient-to-br from-sky-100 to-violet-200 ${roundedFont.className}`}
+      className={`${roundedFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-gradient-to-br from-sky-100 to-violet-200`}
     >
       <AnimatePresence>
         {!isUnlocked && <UnlockScreen onUnlock={handleUnlock} />}
       </AnimatePresence>
 
       {isUnlocked && (
-        <div className="w-full h-full flex flex-col">
-          <header className="w-full p-4 flex-shrink-0 bg-white/30 backdrop-blur-lg z-10 flex items-center justify-between">
-            <h1 className="text-lg font-bold text-gray-700">ニアとおはなし</h1>
+        <div className="w-full h-full flex flex-col z-10">
+          <header
+            className={` w-full p-3 flex-shrink-0 bg-white/20 backdrop-blur-lg z-10 flex items-center justify-between border-b border-white/20`}
+          >
+            <h1 className="text-xl font-bold text-gray-800 ml-2">
+              ニアとおはなし
+            </h1>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsHistoryOpen(true)}
+              className="rounded-full text-gray-600 w-11 h-11"
+              aria-label="履歴を表示"
+            >
+              <History size={28} />
+            </Button>
           </header>
 
           <div className="flex-1 w-full relative min-h-0">
@@ -1057,11 +1108,13 @@ export default function ChatPage() {
               />
             </div>
 
-            <AnimatePresence>
-              {liveMessage && liveMessage.role === "ai" && (
-                <LiveMessageBubble message={liveMessage} />
-              )}
-            </AnimatePresence>
+            <div className="absolute inset-0 flex flex-col justify-end pointer-events-none">
+              <AnimatePresence>
+                {liveMessage && liveMessage.role === "ai" && (
+                  <LiveMessageBubble message={liveMessage} />
+                )}
+              </AnimatePresence>
+            </div>
 
             <AnimatePresence>
               {isLoading && <ThinkingIndicator />}
@@ -1071,7 +1124,6 @@ export default function ChatPage() {
           <ChatInputFooter
             onSendMessage={handleSendMessage}
             isLoading={isLoading}
-            onHistoryToggle={() => setIsHistoryOpen(true)}
           />
 
           <AnimatePresence>
