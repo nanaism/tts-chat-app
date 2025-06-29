@@ -1133,17 +1133,10 @@ export default function ChatPage() {
     }
     audioContextRef.current?.resume();
     setIsUnlocked(true);
-  };
 
-  // ★★★【変更点 5】★★★ 起動時に初回メッセージを再生するuseEffect
-  useEffect(() => {
-    // isUnlockedがtrueになり、かつ履歴が初期メッセージのみの場合に実行
-    if (
-      isUnlocked &&
-      messages.length === 1 &&
-      messages[0].id === 0 &&
-      !isSpeaking
-    ) {
+    // ★★★【変更点 1】★★★ 挨拶の再生ロジックをここに追加
+    // 履歴がない、まっさらな状態の時だけ挨拶を再生する
+    if (messages.length === 1 && messages[0].id === 0 && !isSpeaking) {
       const firstMessage = messages[0];
       if (firstMessage.audioUrl) {
         setBaseEmotion(firstMessage.emotion || "happy");
@@ -1154,8 +1147,7 @@ export default function ChatPage() {
         });
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isUnlocked]);
+  };
 
   // ★★★【変更点 6】★★★ playAudio関数をURLとBase64の両方に対応させる
   const playAudio = (audioSrc: string, onEnd?: () => void) => {
