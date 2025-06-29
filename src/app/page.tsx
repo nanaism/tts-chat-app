@@ -15,14 +15,14 @@ import {
   Heart,
   History,
   Loader,
-  Play,
+  Phone,
+  PhoneOff,
   RotateCw,
   Send,
   Sparkles,
   Star,
   X,
 } from "lucide-react";
-// ★★★【変更点 1】★★★ M_PLUS_Rounded_1c から Kiwi_Maru に変更
 import { Kiwi_Maru } from "next/font/google";
 import {
   KeyboardEvent,
@@ -39,19 +39,61 @@ import {
   GLTFParser,
 } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-// ★★★【変更点 2】★★★ フォントを Kiwi Maru に設定
 const cuteFont = Kiwi_Maru({
-  weight: ["400", "500"], // 必要なフォントウェイトを指定
+  weight: ["400", "500"],
   subsets: ["latin"],
-  display: "swap", // フォントの読み込み戦略を設定
+  display: "swap",
 });
+
+// ★★★【変更点 1】★★★ 起動時のランダムメッセージと音声ファイルのリストを定義
+// public/sounds/ に配置した実際のファイル名に合わせてください。
+const initialMessages = [
+  {
+    text: "こんにちは！わたしはニア。おはなししよう！",
+    emotion: "happy" as Emotion,
+    audioUrl: "/sounds/greeting1.wav",
+  },
+  {
+    text: "今日どんなことがあったの？ニアに教えてくれるとうれしいな！",
+    emotion: "happy" as Emotion,
+    audioUrl: "/sounds/greeting2.wav",
+  },
+  {
+    text: "やっほー！君が来てくれるの、ずっと待ってたんだ！さっそくおしゃべりしよっ！",
+    emotion: "happy" as Emotion,
+    audioUrl: "/sounds/greeting4.wav",
+  },
+];
+
+// ★★★【変更点 2】★★★ 終了時の音声もファイルパスで指定
+// ★★★【変更点 1】★★★ 終了時の音声URLを削除し、メッセージのリストを定義
+// const GOODBYE_AUDIO_URL = "/sounds/goodbye.wav"; // ← この行を削除またはコメントアウト
+
+const goodbyeMessages = [
+  {
+    text: "またね！いつでも待ってるからね！",
+    emotion: "happy" as Emotion,
+    audioUrl: "/sounds/goodbye1.wav",
+  },
+  {
+    text: "バイバイ！次のおはなしも楽しみにしてるね！",
+    emotion: "happy" as Emotion,
+    audioUrl: "/sounds/goodbye2.wav",
+  },
+  {
+    text: "じゃあね！また会いに来てね～！",
+    emotion: "happy" as Emotion,
+    audioUrl: "/sounds/goodbye3.wav", // public/sounds/ に配置したファイル名に合わせる
+  },
+];
 
 type Message = {
   id: number;
   role: "user" | "ai";
   text: string;
-  audioData?: string;
-  emotion?: string;
+  audioData?: string; // APIからのBase64音声
+  audioUrl?: string; // ローカルの音声ファイルパス
+  emotion?: Emotion;
 };
 type Emotion = VRMExpressionPresetName | "thinking";
 
@@ -195,7 +237,6 @@ const ModelLoader = () => {
             <Star className="w-20 h-20 text-pink-400" fill="currentColor" />
           </motion.div>
         </div>
-        {/* ★★★【変更点 3】★★★ フォントクラスの指定を削除（親要素から継承するため） */}
         <motion.p
           variants={itemVariants}
           className={`text-lg font-semibold text-gray-700 bg-white/40 backdrop-blur-md px-4 py-2 rounded-full`}
@@ -298,6 +339,11 @@ const VRMViewer = memo(
       const spine = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Spine);
       const chest = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Chest);
 
+      // ★★★【変更点 1】★★★ 呼吸アニメーションの計算をここで行う
+      // 0.8 は呼吸の速さ（小さいほどゆっくり）、0.04 は呼吸の深さ（胸の動きの大きさ）
+      const breathingCycle = Math.sin(clockTime * 0.8);
+      const breathingAmount = ((breathingCycle + 1) / 2) * 0.04;
+
       if (startTimeRef.current === 0) {
         startTimeRef.current = clockTime;
         blinkState.current.lastBlinkTime = 0;
@@ -372,12 +418,15 @@ const VRMViewer = memo(
             0,
             clampedDelta * 2.0
           );
-        if (chest)
+
+        // ★★★【変更点 2】★★★ 考え中の状態でも呼吸させる
+        if (chest) {
           chest.rotation.x = THREE.MathUtils.lerp(
             chest.rotation.x,
-            0,
+            breathingAmount, // 目標値を呼吸の動きにする
             clampedDelta * 2.0
           );
+        }
 
         manager.setValue(VRMExpressionPresetName.Happy, 0);
         manager.setValue(
@@ -452,6 +501,8 @@ const VRMViewer = memo(
           );
 
           const lerpFactor = clampedDelta * 2.0;
+          let targetChestRotationX = 0; // ★★★【変更点 3】★★★ 会話中の胸の目標角度を定義
+
           switch (emotion) {
             case VRMExpressionPresetName.Happy:
               if (gltf.scene)
@@ -474,12 +525,7 @@ const VRMViewer = memo(
                 );
               break;
             case VRMExpressionPresetName.Sad:
-              if (chest)
-                chest.rotation.x = THREE.MathUtils.lerp(
-                  chest.rotation.x,
-                  0.15,
-                  lerpFactor
-                );
+              targetChestRotationX = 0.15; // 悲しい時は少しうつむく
               if (head)
                 head.rotation.x = THREE.MathUtils.lerp(
                   head.rotation.x,
@@ -500,12 +546,6 @@ const VRMViewer = memo(
                   0,
                   lerpFactor
                 );
-              if (chest)
-                chest.rotation.x = THREE.MathUtils.lerp(
-                  chest.rotation.x,
-                  0,
-                  lerpFactor
-                );
               if (head)
                 head.rotation.x = THREE.MathUtils.lerp(
                   head.rotation.x,
@@ -513,6 +553,14 @@ const VRMViewer = memo(
                   lerpFactor
                 );
               break;
+          }
+          // ★★★【変更点 4】★★★ 感情の動きに呼吸を上乗せして適用
+          if (chest) {
+            chest.rotation.x = THREE.MathUtils.lerp(
+              chest.rotation.x,
+              targetChestRotationX + breathingAmount,
+              lerpFactor
+            );
           }
         } else {
           manager.setValue(VRMExpressionPresetName.Aa, 0);
@@ -580,6 +628,15 @@ const VRMViewer = memo(
                 targetHeadX,
                 lerpFactor
               );
+
+            // ★★★【変更点 5】★★★ アイドル状態でも常に呼吸させる
+            if (chest) {
+              chest.rotation.x = THREE.MathUtils.lerp(
+                chest.rotation.x,
+                breathingAmount, // 目標値は呼吸の動きのみ
+                lerpFactor
+              );
+            }
           }
         }
       }
@@ -842,12 +899,16 @@ const ThinkingIndicator = memo(() => {
 });
 ThinkingIndicator.displayName = "ThinkingIndicator";
 
-const ChatInputFooter = memo(
+const ControlBarFooter = memo(
   ({
     onSendMessage,
+    onHistoryClick,
+    onEndCallClick,
     isLoading,
   }: {
     onSendMessage: (input: string) => void;
+    onHistoryClick: () => void;
+    onEndCallClick: () => void;
     isLoading: boolean;
   }) => {
     const [input, setInput] = useState("");
@@ -867,6 +928,19 @@ const ChatInputFooter = memo(
     return (
       <footer className="p-3 bg-white/40 backdrop-blur-lg border-t flex-shrink-0 z-10">
         <div className="flex w-full items-center space-x-3">
+          <motion.div whileTap={{ scale: 0.9 }}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onHistoryClick}
+              disabled={isLoading}
+              className="rounded-full text-gray-600 w-6 h-6"
+              aria-label="履歴を表示"
+            >
+              <History size={26} />
+            </Button>
+          </motion.div>
+
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -906,12 +980,23 @@ const ChatInputFooter = memo(
               </AnimatePresence>
             </Button>
           </motion.div>
+          <motion.div whileTap={{ scale: 0.9 }}>
+            <Button
+              type="button"
+              onClick={onEndCallClick}
+              disabled={isLoading}
+              className="w-12 h-12 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-lg"
+              aria-label="おはなしをやめる"
+            >
+              <PhoneOff className="h-6 w-6" />
+            </Button>
+          </motion.div>
         </div>
       </footer>
     );
   }
 );
-ChatInputFooter.displayName = "ChatInputFooter";
+ControlBarFooter.displayName = "ControlBarFooter";
 
 const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
   <div className="absolute inset-0 bg-gradient-to-br from-sky-100 via-rose-100 to-violet-200 flex flex-col justify-center items-center z-50 p-4 text-center">
@@ -930,11 +1015,16 @@ const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
       <div className="flex justify-center">
         <motion.button
           onClick={onUnlock}
-          className="bg-white/80 backdrop-blur-md rounded-full px-8 py-4 text-lg font-semibold text-violet-600 shadow-lg flex items-center gap-3"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+          // ↓ tailwindのbg-gradient-to-br...が親divの背景色に負けているので、relative+z-10で重ね順を上げる
+          className="relative z-10 bg-gradient-to-br from-emerald-400 via-green-500 to-teal-500 hover:from-emerald-500 hover:to-teal-600 text-white rounded-full px-8 py-4 text-lg font-semibold shadow-xl flex items-center gap-3 backdrop-blur-md transition-all duration-200"
+          style={{
+            background:
+              "linear-gradient(135deg, #34d399 0%, #22c55e 50%, #14b8a6 100%)",
+          }}
+          whileHover={{ scale: 1.07 }}
+          whileTap={{ scale: 0.96 }}
         >
-          <Play className="w-6 h-6" /> はじめる
+          <Phone className="w-6 h-6 text-white drop-shadow" /> はじめる
         </motion.button>
       </div>
     </motion.div>
@@ -942,17 +1032,41 @@ const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
 ));
 UnlockScreen.displayName = "UnlockScreen";
 
-const initialMessage: Message = {
-  id: 0,
-  role: "ai",
-  text: "こんにちは！わたしはニア。おはなししよう！",
-  emotion: "neutral",
-};
 const CHAT_HISTORY_KEY = "near-chat-history";
+
+// ★★★【変更点 3】★★★ ランダムな初回メッセージを生成するヘルパー関数
+const createInitialMessage = (): Message => {
+  const randomIndex = Math.floor(Math.random() * initialMessages.length);
+  const selectedMessage = initialMessages[randomIndex];
+  return {
+    id: 0,
+    role: "ai",
+    text: selectedMessage.text,
+    emotion: selectedMessage.emotion,
+    audioUrl: selectedMessage.audioUrl,
+  };
+};
+
+// ★★★【変更点 2】★★★ ランダムな終了メッセージを生成するヘルパー関数を追加
+const createGoodbyeMessage = (): Message => {
+  const randomIndex = Math.floor(Math.random() * goodbyeMessages.length);
+  const selectedMessage = goodbyeMessages[randomIndex];
+  return {
+    id: Date.now(), // IDはその都度生成
+    role: "ai",
+    text: selectedMessage.text,
+    emotion: selectedMessage.emotion,
+    audioUrl: selectedMessage.audioUrl,
+  };
+};
 
 export default function ChatPage() {
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([initialMessage]);
+  // ★★★【修正点 1】★★★ useStateの初期化を、localStorageに依存しない形に変更
+  // まずはサーバーでも安全な初期メッセージで状態をセットします。
+  const [messages, setMessages] = useState<Message[]>(() => [
+    createInitialMessage(),
+  ]);
   const [isLoading, setIsLoading] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [liveMessage, setLiveMessage] = useState<Message | null>(null);
@@ -974,6 +1088,9 @@ export default function ChatPage() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
+  // ★★★【修正点 2】★★★ 新しいuseEffectフックを追加
+  // このフックはクライアントサイドでのみ実行されます。
+  // ここでlocalStorageからチャット履歴を安全に読み込みます。
   useEffect(() => {
     try {
       const saved = localStorage.getItem(CHAT_HISTORY_KEY);
@@ -985,9 +1102,10 @@ export default function ChatPage() {
       }
     } catch (e) {
       console.error("Failed to load chat history:", e);
+      // エラーが発生した場合は、念のためキーを削除
       localStorage.removeItem(CHAT_HISTORY_KEY);
     }
-  }, []);
+  }, []); // 空の依存配列[]は、コンポーネントのマウント時に一度だけ実行されることを意味します。
 
   const handleUnlock = () => {
     if (!audioContextRef.current) {
@@ -1017,20 +1135,43 @@ export default function ChatPage() {
     setIsUnlocked(true);
   };
 
-  const playAudio = (audioData: string) => {
+  // ★★★【変更点 5】★★★ 起動時に初回メッセージを再生するuseEffect
+  useEffect(() => {
+    // isUnlockedがtrueになり、かつ履歴が初期メッセージのみの場合に実行
+    if (
+      isUnlocked &&
+      messages.length === 1 &&
+      messages[0].id === 0 &&
+      !isSpeaking
+    ) {
+      const firstMessage = messages[0];
+      if (firstMessage.audioUrl) {
+        setBaseEmotion(firstMessage.emotion || "happy");
+        setLiveMessage(firstMessage);
+        playAudio(firstMessage.audioUrl, () => {
+          setBaseEmotion("neutral");
+          setLiveMessage(null);
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUnlocked]);
+
+  // ★★★【変更点 6】★★★ playAudio関数をURLとBase64の両方に対応させる
+  const playAudio = (audioSrc: string, onEnd?: () => void) => {
     const analyser = analyserRef.current;
     const context = audioContextRef.current;
-    if (!analyser || !context || !audioData) return;
+    if (!analyser || !context || !audioSrc) {
+      onEnd?.();
+      return;
+    }
+
     if (audioSourceRef.current) {
       audioSourceRef.current.onended = null;
       audioSourceRef.current.stop();
     }
-    try {
-      const decodedData = window.atob(audioData);
-      const buffer = Uint8Array.from(decodedData, (c) =>
-        c.charCodeAt(0)
-      ).buffer;
 
+    const playDecodedBuffer = (buffer: ArrayBuffer) => {
       context
         .decodeAudioData(buffer)
         .then((audioBuffer) => {
@@ -1041,23 +1182,43 @@ export default function ChatPage() {
           setIsSpeaking(true);
           audioSourceRef.current = source;
           source.onended = () => {
-            setBaseEmotion("neutral");
-            setLiveMessage(null);
-            audioSourceRef.current = null;
             setIsSpeaking(false);
+            audioSourceRef.current = null;
+            onEnd?.();
           };
         })
         .catch((e) => {
           console.error("Error decoding audio data:", e);
-          setBaseEmotion("neutral");
-          setLiveMessage(null);
           setIsSpeaking(false);
+          onEnd?.();
         });
-    } catch (e) {
-      console.error("Error playing audio:", e);
-      setBaseEmotion("neutral");
-      setLiveMessage(null);
-      setIsSpeaking(false);
+    };
+
+    // URLかBase64かを判定
+    if (audioSrc.startsWith("/") || audioSrc.startsWith("http")) {
+      fetch(audioSrc)
+        .then((response) => {
+          if (!response.ok) throw new Error("Audio file not found");
+          return response.arrayBuffer();
+        })
+        .then(playDecodedBuffer)
+        .catch((e) => {
+          console.error("Error fetching audio:", e);
+          setIsSpeaking(false);
+          onEnd?.();
+        });
+    } else {
+      try {
+        const decodedData = window.atob(audioSrc);
+        const buffer = Uint8Array.from(decodedData, (c) =>
+          c.charCodeAt(0)
+        ).buffer;
+        playDecodedBuffer(buffer);
+      } catch (e) {
+        console.error("Error playing base64 audio:", e);
+        setIsSpeaking(false);
+        onEnd?.();
+      }
     }
   };
 
@@ -1066,6 +1227,13 @@ export default function ChatPage() {
 
     if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
     setInteractionEmotion(null);
+    if (audioSourceRef.current) {
+      // ユーザーが話し始めたらニアの音声を止める
+      audioSourceRef.current.onended = null;
+      audioSourceRef.current.stop();
+    }
+    setLiveMessage(null);
+    setIsSpeaking(false);
 
     setIsLoading(true);
     setBaseEmotion("thinking");
@@ -1090,17 +1258,23 @@ export default function ChatPage() {
         role: "ai",
         text: data.textResponse,
         emotion: data.emotion,
+        audioData: data.audioData, // APIからの音声はaudioData
       };
 
       setMessages((prev) => [...prev, aiMessage]);
       setLiveMessage(aiMessage);
 
-      setBaseEmotion((data.emotion as VRMExpressionPresetName) || "happy");
-      playAudio(data.audioData);
+      setBaseEmotion((data.emotion as Emotion) || "happy");
+      if (data.audioData) {
+        playAudio(data.audioData, () => {
+          setBaseEmotion("neutral");
+          setLiveMessage(null);
+        });
+      }
 
       const finalHistory = [
         ...newHistory,
-        { ...aiMessage, audioData: undefined },
+        { ...aiMessage, audioData: undefined, audioUrl: undefined },
       ];
       localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(finalHistory));
     } catch (error) {
@@ -1147,15 +1321,41 @@ export default function ChatPage() {
   const handleReset = () => {
     if (audioSourceRef.current) audioSourceRef.current.stop();
     setIsSpeaking(false);
-    setMessages([initialMessage]);
+    // ★★★【変更点 7】★★★ リセット時も新しいランダムメッセージで開始
+    setMessages([createInitialMessage()]);
     localStorage.removeItem(CHAT_HISTORY_KEY);
     setBaseEmotion("neutral");
     setIsHistoryOpen(false);
     setLiveMessage(null);
   };
 
+  const handleEndCall = () => {
+    if (isLoading) return;
+
+    if (audioSourceRef.current) {
+      audioSourceRef.current.onended = null;
+      audioSourceRef.current.stop();
+      audioSourceRef.current = null;
+    }
+    setIsSpeaking(false);
+    setIsLoading(false);
+    setBaseEmotion("happy");
+    setInteractionEmotion(null);
+
+    // ★★★【変更点 3】★★★ 新しい関数を呼び出してランダムな終了メッセージを生成
+    const goodbyeMessage = createGoodbyeMessage();
+    setLiveMessage(goodbyeMessage);
+
+    // 生成されたメッセージの音声URLを使用する
+    playAudio(goodbyeMessage.audioUrl!, () => {
+      setTimeout(() => {
+        setIsUnlocked(false);
+        handleReset();
+      }, 500);
+    });
+  };
+
   return (
-    // ★★★【変更点 4】★★★ main要素にフォントクラスを適用して全体に反映
     <main
       className={`${cuteFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-gradient-to-br from-sky-100 to-violet-200`}
     >
@@ -1166,20 +1366,9 @@ export default function ChatPage() {
       {isUnlocked && (
         <div className="w-full h-full flex flex-col z-10">
           <header
-            className={` w-full p-3 flex-shrink-0 bg-white/20 backdrop-blur-lg z-10 flex items-center justify-between border-b border-white/20`}
+            className={` w-full p-3 flex-shrink-0 bg-white/20 backdrop-blur-lg z-10 flex items-center justify-center border-b border-white/20`}
           >
-            <h1 className="text-xl font-bold text-gray-800 ml-2">
-              ニアとおはなし
-            </h1>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsHistoryOpen(true)}
-              className="rounded-full text-gray-600 w-11 h-11"
-              aria-label="履歴を表示"
-            >
-              <History size={28} />
-            </Button>
+            <h1 className="text-xl font-bold text-gray-800">ニアとおはなし</h1>
           </header>
 
           <div className="flex-1 w-full relative min-h-0">
@@ -1207,9 +1396,11 @@ export default function ChatPage() {
             </AnimatePresence>
           </div>
 
-          <ChatInputFooter
+          <ControlBarFooter
             onSendMessage={handleSendMessage}
             isLoading={isLoading}
+            onHistoryClick={() => setIsHistoryOpen(true)}
+            onEndCallClick={handleEndCall}
           />
 
           <AnimatePresence>
