@@ -12,15 +12,18 @@ import { Html, OrbitControls } from "@react-three/drei";
 import { Canvas, ThreeEvent, useFrame, useLoader } from "@react-three/fiber";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Heart,
   History,
   Loader,
   Play,
   RotateCw,
   Send,
   Sparkles,
+  Star,
   X,
 } from "lucide-react";
-import { M_PLUS_Rounded_1c } from "next/font/google";
+// ★★★【変更点 1】★★★ M_PLUS_Rounded_1c から Kiwi_Maru に変更
+import { Kiwi_Maru } from "next/font/google";
 import {
   KeyboardEvent,
   memo,
@@ -36,9 +39,11 @@ import {
   GLTFParser,
 } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-const roundedFont = M_PLUS_Rounded_1c({
-  weight: ["400", "700"],
+// ★★★【変更点 2】★★★ フォントを Kiwi Maru に設定
+const cuteFont = Kiwi_Maru({
+  weight: ["400", "500"], // 必要なフォントウェイトを指定
   subsets: ["latin"],
+  display: "swap", // フォントの読み込み戦略を設定
 });
 
 type Message = {
@@ -136,12 +141,68 @@ const TapEffect = ({
 };
 
 const ModelLoader = () => {
+  const containerVariants = {
+    hidden: { opacity: 0, scale: 0.9 },
+    visible: {
+      opacity: 1,
+      scale: 1,
+      transition: {
+        duration: 0.4,
+        staggerChildren: 0.1,
+      },
+    },
+  };
+  const itemVariants = {
+    hidden: { opacity: 0, y: 10 },
+    visible: {
+      opacity: 1,
+      y: 0,
+      transition: { ease: "easeOut" as const, duration: 0.5 },
+    },
+  };
+
   return (
     <Html center>
-      <div className="flex items-center gap-3 bg-white/40 backdrop-blur-md rounded-full px-5 py-3 text-gray-700 shadow-lg">
-        <Loader className="h-6 w-6 animate-spin" />
-        <p className="font-semibold">ニアをよびだしています...</p>
-      </div>
+      <motion.div
+        variants={containerVariants}
+        initial="hidden"
+        animate="visible"
+        className="flex flex-col items-center justify-center gap-6"
+      >
+        <div className="relative w-48 h-48 flex items-center justify-center">
+          <motion.div
+            className="absolute inset-0 animate-spin"
+            style={{ animationDuration: "8s" }}
+          >
+            <div className="absolute top-0 left-1/2 -translate-x-1/2">
+              <Heart className="w-8 h-8 text-pink-300" fill="currentColor" />
+            </div>
+            <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
+              <Star className="w-7 h-7 text-yellow-300" fill="currentColor" />
+            </div>
+            <div className="absolute left-0 top-1/2 -translate-y-1/2">
+              <Sparkles className="w-7 h-7 text-sky-300" fill="currentColor" />
+            </div>
+            <div className="absolute right-0 top-1/2 -translate-y-1/2">
+              <Star className="w-8 h-8 text-violet-300" fill="currentColor" />
+            </div>
+          </motion.div>
+
+          <motion.div
+            animate={{ scale: [1, 1.1, 1], opacity: [0.8, 1, 0.8] }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+          >
+            <Star className="w-20 h-20 text-pink-400" fill="currentColor" />
+          </motion.div>
+        </div>
+        {/* ★★★【変更点 3】★★★ フォントクラスの指定を削除（親要素から継承するため） */}
+        <motion.p
+          variants={itemVariants}
+          className={`text-lg font-semibold text-gray-700 bg-white/40 backdrop-blur-md px-4 py-2 rounded-full`}
+        >
+          まほうのじゅんびちゅう…
+        </motion.p>
+      </motion.div>
     </Html>
   );
 };
@@ -204,7 +265,28 @@ const VRMViewer = memo(
       }
     }, [gltf]);
 
+    useEffect(() => {
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === "visible") {
+          if (vrmRef.current?.springBoneManager) {
+            vrmRef.current.springBoneManager.reset();
+          }
+          startTimeRef.current = 0;
+        }
+      };
+
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+      return () => {
+        document.removeEventListener(
+          "visibilitychange",
+          handleVisibilityChange
+        );
+      };
+    }, []);
+
     useFrame((state, delta) => {
+      const clampedDelta = Math.min(delta, 1 / 20);
+
       const vrm = vrmRef.current;
       if (!vrm?.expressionManager || !vrm.humanoid) return;
 
@@ -218,6 +300,7 @@ const VRMViewer = memo(
 
       if (startTimeRef.current === 0) {
         startTimeRef.current = clockTime;
+        blinkState.current.lastBlinkTime = 0;
       }
       const elapsedTime = clockTime - startTimeRef.current;
 
@@ -258,42 +341,42 @@ const VRMViewer = memo(
           gltf.scene.position.y = THREE.MathUtils.lerp(
             gltf.scene.position.y,
             -0.1,
-            delta * 3.0
+            clampedDelta * 3.0
           );
         if (head) {
           head.rotation.x = THREE.MathUtils.lerp(
             head.rotation.x,
             0,
-            delta * 2.0
+            clampedDelta * 2.0
           );
           head.rotation.y = THREE.MathUtils.lerp(
             head.rotation.y,
             0,
-            delta * 2.0
+            clampedDelta * 2.0
           );
           head.rotation.z = THREE.MathUtils.lerp(
             head.rotation.z,
             Math.PI / 18,
-            delta * 3.0
+            clampedDelta * 3.0
           );
         }
         if (neck)
           neck.rotation.y = THREE.MathUtils.lerp(
             neck.rotation.y,
             0,
-            delta * 2.0
+            clampedDelta * 2.0
           );
         if (spine)
           spine.rotation.y = THREE.MathUtils.lerp(
             spine.rotation.y,
             0,
-            delta * 2.0
+            clampedDelta * 2.0
           );
         if (chest)
           chest.rotation.x = THREE.MathUtils.lerp(
             chest.rotation.x,
             0,
-            delta * 2.0
+            clampedDelta * 2.0
           );
 
         manager.setValue(VRMExpressionPresetName.Happy, 0);
@@ -302,7 +385,7 @@ const VRMViewer = memo(
           THREE.MathUtils.lerp(
             manager.getValue(VRMExpressionPresetName.Neutral) ?? 0,
             0.8,
-            delta * 5.0
+            clampedDelta * 5.0
           )
         );
         manager.setValue(
@@ -310,7 +393,7 @@ const VRMViewer = memo(
           THREE.MathUtils.lerp(
             manager.getValue(VRMExpressionPresetName.Oh) ?? 0,
             0.2,
-            delta * 5.0
+            clampedDelta * 5.0
           )
         );
         manager.setValue(VRMExpressionPresetName.Aa, 0);
@@ -319,7 +402,7 @@ const VRMViewer = memo(
           head.rotation.z = THREE.MathUtils.lerp(
             head.rotation.z,
             0,
-            delta * 3.0
+            clampedDelta * 3.0
           );
 
         const rightUpperArm = humanoid.getNormalizedBoneNode(
@@ -332,12 +415,12 @@ const VRMViewer = memo(
           rightUpperArm.rotation.z = THREE.MathUtils.lerp(
             rightUpperArm.rotation.z,
             -restingArmRad.current,
-            delta * 5.0
+            clampedDelta * 5.0
           );
           leftUpperArm.rotation.z = THREE.MathUtils.lerp(
             leftUpperArm.rotation.z,
             restingArmRad.current,
-            delta * 5.0
+            clampedDelta * 5.0
           );
         }
 
@@ -351,7 +434,11 @@ const VRMViewer = memo(
           const currentWeight = manager.getValue(preset) ?? 0.0;
           manager.setValue(
             preset,
-            THREE.MathUtils.lerp(currentWeight, targetWeight, delta * 10.0)
+            THREE.MathUtils.lerp(
+              currentWeight,
+              targetWeight,
+              clampedDelta * 10.0
+            )
           );
         }
 
@@ -364,7 +451,7 @@ const VRMViewer = memo(
             Math.min(1.0, (volume / 100) ** 1.5)
           );
 
-          const lerpFactor = delta * 2.0;
+          const lerpFactor = clampedDelta * 2.0;
           switch (emotion) {
             case VRMExpressionPresetName.Happy:
               if (gltf.scene)
@@ -430,8 +517,8 @@ const VRMViewer = memo(
         } else {
           manager.setValue(VRMExpressionPresetName.Aa, 0);
 
-          const INITIAL_DELAY = 1.2;
-          const lerpFactor = delta * 1.5;
+          const INITIAL_DELAY = 1.0;
+          const lerpFactor = clampedDelta * 1.5;
 
           if (elapsedTime < INITIAL_DELAY) {
             if (gltf.scene)
@@ -496,7 +583,7 @@ const VRMViewer = memo(
           }
         }
       }
-      vrm.update(delta);
+      vrm.update(clampedDelta);
     });
 
     return (
@@ -826,7 +913,6 @@ const ChatInputFooter = memo(
 );
 ChatInputFooter.displayName = "ChatInputFooter";
 
-// ★★★【ここから修正】アンロック画面を元のデザインに戻しました ★★★
 const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
   <div className="absolute inset-0 bg-gradient-to-br from-sky-100 via-rose-100 to-violet-200 flex flex-col justify-center items-center z-50 p-4 text-center">
     <motion.div
@@ -855,7 +941,6 @@ const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
   </div>
 ));
 UnlockScreen.displayName = "UnlockScreen";
-// ★★★【ここまで修正】 ★★★
 
 const initialMessage: Message = {
   id: 0,
@@ -1070,8 +1155,9 @@ export default function ChatPage() {
   };
 
   return (
+    // ★★★【変更点 4】★★★ main要素にフォントクラスを適用して全体に反映
     <main
-      className={`${roundedFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-gradient-to-br from-sky-100 to-violet-200`}
+      className={`${cuteFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-gradient-to-br from-sky-100 to-violet-200`}
     >
       <AnimatePresence>
         {!isUnlocked && <UnlockScreen onUnlock={handleUnlock} />}
