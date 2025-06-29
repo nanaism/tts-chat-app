@@ -17,10 +17,10 @@ import {
   Loader,
   Phone,
   PhoneOff,
-  RotateCw,
   Send,
   Sparkles,
   Star,
+  Trash,
   X,
 } from "lucide-react";
 import { Kiwi_Maru } from "next/font/google";
@@ -96,6 +96,11 @@ type Message = {
   emotion?: Emotion;
 };
 type Emotion = VRMExpressionPresetName | "thinking";
+
+interface CustomWindow {
+  AudioContext?: typeof AudioContext;
+  webkitAudioContext?: typeof AudioContext;
+}
 
 const TapEffect = ({
   id,
@@ -248,6 +253,7 @@ const ModelLoader = () => {
   );
 };
 
+// ★★★【修正点 1】★★★ 'Sorrow' を 'Sad' に修正した完全なVRMViewerコンポーネント
 const VRMViewer = memo(
   ({
     emotion,
@@ -339,8 +345,6 @@ const VRMViewer = memo(
       const spine = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Spine);
       const chest = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Chest);
 
-      // ★★★【変更点 1】★★★ 呼吸アニメーションの計算をここで行う
-      // 0.8 は呼吸の速さ（小さいほどゆっくり）、0.04 は呼吸の深さ（胸の動きの大きさ）
       const breathingCycle = Math.sin(clockTime * 0.8);
       const breathingAmount = ((breathingCycle + 1) / 2) * 0.04;
 
@@ -357,30 +361,34 @@ const VRMViewer = memo(
         interactionRef.current.position.y += 0.15;
       }
 
-      let blinkValue = 0;
-      const blinkManager = blinkState.current;
-      const blinkDuration = 0.1;
-
-      if (blinkManager.isBlinking) {
-        const progress =
-          (elapsedTime - blinkManager.lastBlinkTime) / blinkDuration;
-        if (progress >= 1) {
-          blinkManager.isBlinking = false;
-          blinkValue = 0;
-        } else {
-          blinkValue = Math.sin(progress * Math.PI);
-        }
+      if (emotion === "thinking") {
+        manager.setValue(VRMExpressionPresetName.Blink, 1.0);
       } else {
-        if (
-          elapsedTime - blinkManager.lastBlinkTime >
-          blinkManager.nextBlinkDelay
-        ) {
-          blinkManager.isBlinking = true;
-          blinkManager.lastBlinkTime = elapsedTime;
-          blinkManager.nextBlinkDelay = 2.0 + Math.random() * 5.0;
+        let blinkValue = 0;
+        const blinkManager = blinkState.current;
+        const blinkDuration = 0.1;
+
+        if (blinkManager.isBlinking) {
+          const progress =
+            (elapsedTime - blinkManager.lastBlinkTime) / blinkDuration;
+          if (progress >= 1) {
+            blinkManager.isBlinking = false;
+            blinkValue = 0;
+          } else {
+            blinkValue = Math.sin(progress * Math.PI);
+          }
+        } else {
+          if (
+            elapsedTime - blinkManager.lastBlinkTime >
+            blinkManager.nextBlinkDelay
+          ) {
+            blinkManager.isBlinking = true;
+            blinkManager.lastBlinkTime = elapsedTime;
+            blinkManager.nextBlinkDelay = 2.0 + Math.random() * 5.0;
+          }
         }
+        manager.setValue(VRMExpressionPresetName.Blink, blinkValue);
       }
-      manager.setValue(VRMExpressionPresetName.Blink, blinkValue);
 
       if (emotion === "thinking") {
         if (gltf.scene)
@@ -412,18 +420,18 @@ const VRMViewer = memo(
             0,
             clampedDelta * 2.0
           );
+
         if (spine)
           spine.rotation.y = THREE.MathUtils.lerp(
             spine.rotation.y,
-            0,
+            Math.sin(clockTime * 0.3) * 0.1,
             clampedDelta * 2.0
           );
 
-        // ★★★【変更点 2】★★★ 考え中の状態でも呼吸させる
         if (chest) {
           chest.rotation.x = THREE.MathUtils.lerp(
             chest.rotation.x,
-            breathingAmount, // 目標値を呼吸の動きにする
+            breathingAmount,
             clampedDelta * 2.0
           );
         }
@@ -433,7 +441,7 @@ const VRMViewer = memo(
           VRMExpressionPresetName.Neutral,
           THREE.MathUtils.lerp(
             manager.getValue(VRMExpressionPresetName.Neutral) ?? 0,
-            0.8,
+            0.5,
             clampedDelta * 5.0
           )
         );
@@ -441,12 +449,24 @@ const VRMViewer = memo(
           VRMExpressionPresetName.Oh,
           THREE.MathUtils.lerp(
             manager.getValue(VRMExpressionPresetName.Oh) ?? 0,
-            0.2,
+            0.15,
+            clampedDelta * 5.0
+          )
+        );
+        // 'Sorrow' を 'Sad' に変更
+        manager.setValue(
+          VRMExpressionPresetName.Sad,
+          THREE.MathUtils.lerp(
+            manager.getValue(VRMExpressionPresetName.Sad) ?? 0,
+            0.3,
             clampedDelta * 5.0
           )
         );
         manager.setValue(VRMExpressionPresetName.Aa, 0);
       } else {
+        // 'Sad' プリセットを元に戻す
+        manager.setValue(VRMExpressionPresetName.Sad, 0);
+
         if (head)
           head.rotation.z = THREE.MathUtils.lerp(
             head.rotation.z,
@@ -476,7 +496,8 @@ const VRMViewer = memo(
         for (const preset of Object.values(VRMExpressionPresetName)) {
           if (
             typeof preset !== "string" ||
-            preset === VRMExpressionPresetName.Blink
+            preset === VRMExpressionPresetName.Blink ||
+            preset === VRMExpressionPresetName.Sad // Sadは個別管理なので除外
           )
             continue;
           const targetWeight = preset === emotion ? 1.0 : 0.0;
@@ -501,7 +522,7 @@ const VRMViewer = memo(
           );
 
           const lerpFactor = clampedDelta * 2.0;
-          let targetChestRotationX = 0; // ★★★【変更点 3】★★★ 会話中の胸の目標角度を定義
+          let targetChestRotationX = 0;
 
           switch (emotion) {
             case VRMExpressionPresetName.Happy:
@@ -525,7 +546,7 @@ const VRMViewer = memo(
                 );
               break;
             case VRMExpressionPresetName.Sad:
-              targetChestRotationX = 0.15; // 悲しい時は少しうつむく
+              targetChestRotationX = 0.15;
               if (head)
                 head.rotation.x = THREE.MathUtils.lerp(
                   head.rotation.x,
@@ -554,7 +575,6 @@ const VRMViewer = memo(
                 );
               break;
           }
-          // ★★★【変更点 4】★★★ 感情の動きに呼吸を上乗せして適用
           if (chest) {
             chest.rotation.x = THREE.MathUtils.lerp(
               chest.rotation.x,
@@ -629,11 +649,10 @@ const VRMViewer = memo(
                 lerpFactor
               );
 
-            // ★★★【変更点 5】★★★ アイドル状態でも常に呼吸させる
             if (chest) {
               chest.rotation.x = THREE.MathUtils.lerp(
                 chest.rotation.x,
-                breathingAmount, // 目標値は呼吸の動きのみ
+                breathingAmount,
                 lerpFactor
               );
             }
@@ -832,7 +851,7 @@ const ChatHistoryOverlay = memo(
               aria-label="履歴をリセット"
               disabled={isLoading || messages.length <= 1}
             >
-              <RotateCw size={20} />
+              <Trash size={20} />
             </Button>
           </div>
           <div className="flex-1 p-4 overflow-y-auto">
@@ -1062,35 +1081,27 @@ const createGoodbyeMessage = (): Message => {
 
 export default function ChatPage() {
   const [isUnlocked, setIsUnlocked] = useState(false);
-  // ★★★【修正点 1】★★★ useStateの初期化を、localStorageに依存しない形に変更
-  // まずはサーバーでも安全な初期メッセージで状態をセットします。
+  const [isNewSession, setIsNewSession] = useState(true);
   const [messages, setMessages] = useState<Message[]>(() => [
     createInitialMessage(),
   ]);
   const [isLoading, setIsLoading] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [liveMessage, setLiveMessage] = useState<Message | null>(null);
-
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [baseEmotion, setBaseEmotion] = useState<Emotion>("neutral");
   const [interactionEmotion, setInteractionEmotion] = useState<Emotion | null>(
     null
   );
   const interactionTimerRef = useRef<NodeJS.Timeout | null>(null);
-
   const [effects, setEffects] = useState<
     Array<{ id: number; position: THREE.Vector3 }>
   >([]);
-
   const currentEmotion = interactionEmotion || baseEmotion;
-
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
-  // ★★★【修正点 2】★★★ 新しいuseEffectフックを追加
-  // このフックはクライアントサイドでのみ実行されます。
-  // ここでlocalStorageからチャット履歴を安全に読み込みます。
   useEffect(() => {
     try {
       const saved = localStorage.getItem(CHAT_HISTORY_KEY);
@@ -1098,58 +1109,16 @@ export default function ChatPage() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           setMessages(parsed);
+          setIsNewSession(false);
         }
       }
     } catch (e) {
       console.error("Failed to load chat history:", e);
-      // エラーが発生した場合は、念のためキーを削除
       localStorage.removeItem(CHAT_HISTORY_KEY);
     }
-  }, []); // 空の依存配列[]は、コンポーネントのマウント時に一度だけ実行されることを意味します。
+  }, []);
 
-  const handleUnlock = () => {
-    if (!audioContextRef.current) {
-      try {
-        const w = window as {
-          AudioContext?: typeof AudioContext;
-          webkitAudioContext?: typeof AudioContext;
-        };
-        const AudioContextClass = w.AudioContext || w.webkitAudioContext;
-
-        if (!AudioContextClass) {
-          console.error("AudioContext is not supported in this browser.");
-          alert("お使いのブラウザは音声機能に対応していません。");
-          return;
-        }
-        const context = new AudioContextClass();
-        const analyser = context.createAnalyser();
-        analyser.fftSize = 256;
-        analyser.connect(context.destination);
-        audioContextRef.current = context;
-        analyserRef.current = analyser;
-      } catch (e) {
-        console.error("Failed to initialize AudioContext:", e);
-      }
-    }
-    audioContextRef.current?.resume();
-    setIsUnlocked(true);
-
-    // ★★★【変更点 1】★★★ 挨拶の再生ロジックをここに追加
-    // 履歴がない、まっさらな状態の時だけ挨拶を再生する
-    if (messages.length === 1 && messages[0].id === 0 && !isSpeaking) {
-      const firstMessage = messages[0];
-      if (firstMessage.audioUrl) {
-        setBaseEmotion(firstMessage.emotion || "happy");
-        setLiveMessage(firstMessage);
-        playAudio(firstMessage.audioUrl, () => {
-          setBaseEmotion("neutral");
-          setLiveMessage(null);
-        });
-      }
-    }
-  };
-
-  // ★★★【変更点 6】★★★ playAudio関数をURLとBase64の両方に対応させる
+  // ★★★【修正点 2】★★★ `playAudio` 関数をコンポーネントのトップレベルに一度だけ定義
   const playAudio = (audioSrc: string, onEnd?: () => void) => {
     const analyser = analyserRef.current;
     const context = audioContextRef.current;
@@ -1186,7 +1155,6 @@ export default function ChatPage() {
         });
     };
 
-    // URLかBase64かを判定
     if (audioSrc.startsWith("/") || audioSrc.startsWith("http")) {
       fetch(audioSrc)
         .then((response) => {
@@ -1214,13 +1182,55 @@ export default function ChatPage() {
     }
   };
 
+  // ★★★【修正点 3】★★★ `handleUnlock` の構造をクリーンアップ
+  const handleUnlock = () => {
+    if (!audioContextRef.current) {
+      try {
+        const w = window as CustomWindow;
+        const AudioContextClass = w.AudioContext || w.webkitAudioContext;
+        if (!AudioContextClass) {
+          console.error("AudioContext is not supported in this browser.");
+          alert("お使いのブラウザは音声機能に対応していません。");
+          return;
+        }
+        const context = new AudioContextClass();
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.connect(context.destination);
+        audioContextRef.current = context;
+        analyserRef.current = analyser;
+      } catch (e) {
+        console.error("Failed to initialize AudioContext:", e);
+      }
+    }
+    audioContextRef.current?.resume();
+    setIsUnlocked(true);
+
+    if (isNewSession && !isSpeaking) {
+      const firstMessage = messages[0];
+      if (firstMessage?.audioUrl) {
+        setBaseEmotion(firstMessage.emotion || "happy");
+        setLiveMessage(firstMessage);
+
+        // ★★★【変更点】★★★ 発話後の状態リセットをsetTimeoutで1秒遅らせる
+        playAudio(firstMessage.audioUrl, () => {
+          setTimeout(() => {
+            setBaseEmotion("neutral");
+            setLiveMessage(null);
+          }, 1000); // 1秒のクールダウンを追加
+        });
+
+        setIsNewSession(false);
+      }
+    }
+  };
+
   const handleSendMessage = async (input: string) => {
     if (isLoading) return;
 
     if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
     setInteractionEmotion(null);
     if (audioSourceRef.current) {
-      // ユーザーが話し始めたらニアの音声を止める
       audioSourceRef.current.onended = null;
       audioSourceRef.current.stop();
     }
@@ -1250,7 +1260,7 @@ export default function ChatPage() {
         role: "ai",
         text: data.textResponse,
         emotion: data.emotion,
-        audioData: data.audioData, // APIからの音声はaudioData
+        audioData: data.audioData,
       };
 
       setMessages((prev) => [...prev, aiMessage]);
@@ -1259,8 +1269,11 @@ export default function ChatPage() {
       setBaseEmotion((data.emotion as Emotion) || "happy");
       if (data.audioData) {
         playAudio(data.audioData, () => {
-          setBaseEmotion("neutral");
-          setLiveMessage(null);
+          // 発話後のクールダウン
+          setTimeout(() => {
+            setBaseEmotion("neutral");
+            setLiveMessage(null);
+          }, 1000);
         });
       }
 
@@ -1313,12 +1326,12 @@ export default function ChatPage() {
   const handleReset = () => {
     if (audioSourceRef.current) audioSourceRef.current.stop();
     setIsSpeaking(false);
-    // ★★★【変更点 7】★★★ リセット時も新しいランダムメッセージで開始
     setMessages([createInitialMessage()]);
     localStorage.removeItem(CHAT_HISTORY_KEY);
     setBaseEmotion("neutral");
     setIsHistoryOpen(false);
     setLiveMessage(null);
+    setIsNewSession(true); // リセット時は新規セッションに戻す
   };
 
   const handleEndCall = () => {
@@ -1334,17 +1347,17 @@ export default function ChatPage() {
     setBaseEmotion("happy");
     setInteractionEmotion(null);
 
-    // ★★★【変更点 3】★★★ 新しい関数を呼び出してランダムな終了メッセージを生成
     const goodbyeMessage = createGoodbyeMessage();
     setLiveMessage(goodbyeMessage);
 
-    // 生成されたメッセージの音声URLを使用する
-    playAudio(goodbyeMessage.audioUrl!, () => {
-      setTimeout(() => {
-        setIsUnlocked(false);
-        handleReset();
-      }, 500);
-    });
+    if (goodbyeMessage.audioUrl) {
+      playAudio(goodbyeMessage.audioUrl, () => {
+        setTimeout(() => {
+          setIsUnlocked(false);
+          handleReset();
+        }, 500);
+      });
+    }
   };
 
   return (
