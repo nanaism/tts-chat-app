@@ -28,6 +28,7 @@ import {
   KeyboardEvent,
   memo,
   Suspense,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -45,8 +46,7 @@ const cuteFont = Kiwi_Maru({
   display: "swap",
 });
 
-// ★★★【変更点 1】★★★ 起動時のランダムメッセージと音声ファイルのリストを定義
-// public/sounds/ に配置した実際のファイル名に合わせてください。
+// 起動時のランダムメッセージと音声ファイルのリスト
 const initialMessages = [
   {
     text: "こんにちは！わたしはニア。おはなししよう！",
@@ -65,10 +65,7 @@ const initialMessages = [
   },
 ];
 
-// ★★★【変更点 2】★★★ 終了時の音声もファイルパスで指定
-// ★★★【変更点 1】★★★ 終了時の音声URLを削除し、メッセージのリストを定義
-// const GOODBYE_AUDIO_URL = "/sounds/goodbye.wav"; // ← この行を削除またはコメントアウト
-
+// 終了時の音声メッセージのリスト
 const goodbyeMessages = [
   {
     text: "またね！いつでも待ってるからね！",
@@ -83,7 +80,7 @@ const goodbyeMessages = [
   {
     text: "じゃあね！また会いに来てね～！",
     emotion: "happy" as Emotion,
-    audioUrl: "/sounds/goodbye3.wav", // public/sounds/ に配置したファイル名に合わせる
+    audioUrl: "/sounds/goodbye3.wav",
   },
 ];
 
@@ -91,8 +88,8 @@ type Message = {
   id: number;
   role: "user" | "ai";
   text: string;
-  audioData?: string; // APIからのBase64音声
-  audioUrl?: string; // ローカルの音声ファイルパス
+  audioData?: string;
+  audioUrl?: string;
   emotion?: Emotion;
 };
 type Emotion = VRMExpressionPresetName | "thinking";
@@ -253,7 +250,6 @@ const ModelLoader = () => {
   );
 };
 
-// ★★★【修正点 1】★★★ 'Sorrow' を 'Sad' に修正した完全なVRMViewerコンポーネント
 const VRMViewer = memo(
   ({
     emotion,
@@ -453,7 +449,6 @@ const VRMViewer = memo(
             clampedDelta * 5.0
           )
         );
-        // 'Sorrow' を 'Sad' に変更
         manager.setValue(
           VRMExpressionPresetName.Sad,
           THREE.MathUtils.lerp(
@@ -464,7 +459,6 @@ const VRMViewer = memo(
         );
         manager.setValue(VRMExpressionPresetName.Aa, 0);
       } else {
-        // 'Sad' プリセットを元に戻す
         manager.setValue(VRMExpressionPresetName.Sad, 0);
 
         if (head)
@@ -497,7 +491,7 @@ const VRMViewer = memo(
           if (
             typeof preset !== "string" ||
             preset === VRMExpressionPresetName.Blink ||
-            preset === VRMExpressionPresetName.Sad // Sadは個別管理なので除外
+            preset === VRMExpressionPresetName.Sad
           )
             continue;
           const targetWeight = preset === emotion ? 1.0 : 0.0;
@@ -1034,7 +1028,6 @@ const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
       <div className="flex justify-center">
         <motion.button
           onClick={onUnlock}
-          // ↓ tailwindのbg-gradient-to-br...が親divの背景色に負けているので、relative+z-10で重ね順を上げる
           className="relative z-10 bg-gradient-to-br from-emerald-400 via-green-500 to-teal-500 hover:from-emerald-500 hover:to-teal-600 text-white rounded-full px-8 py-4 text-lg font-semibold shadow-xl flex items-center gap-3 backdrop-blur-md transition-all duration-200"
           style={{
             background:
@@ -1053,7 +1046,6 @@ UnlockScreen.displayName = "UnlockScreen";
 
 const CHAT_HISTORY_KEY = "near-chat-history";
 
-// ★★★【変更点 3】★★★ ランダムな初回メッセージを生成するヘルパー関数
 const createInitialMessage = (): Message => {
   const randomIndex = Math.floor(Math.random() * initialMessages.length);
   const selectedMessage = initialMessages[randomIndex];
@@ -1066,12 +1058,11 @@ const createInitialMessage = (): Message => {
   };
 };
 
-// ★★★【変更点 2】★★★ ランダムな終了メッセージを生成するヘルパー関数を追加
 const createGoodbyeMessage = (): Message => {
   const randomIndex = Math.floor(Math.random() * goodbyeMessages.length);
   const selectedMessage = goodbyeMessages[randomIndex];
   return {
-    id: Date.now(), // IDはその都度生成
+    id: Date.now(),
     role: "ai",
     text: selectedMessage.text,
     emotion: selectedMessage.emotion,
@@ -1118,8 +1109,8 @@ export default function ChatPage() {
     }
   }, []);
 
-  // ★★★【修正点 2】★★★ `playAudio` 関数をコンポーネントのトップレベルに一度だけ定義
-  const playAudio = (audioSrc: string, onEnd?: () => void) => {
+  // ★修正点1: playAudio を useCallback でメモ化
+  const playAudio = useCallback((audioSrc: string, onEnd?: () => void) => {
     const analyser = analyserRef.current;
     const context = audioContextRef.current;
     if (!analyser || !context || !audioSrc) {
@@ -1180,10 +1171,10 @@ export default function ChatPage() {
         onEnd?.();
       }
     }
-  };
+  }, []);
 
-  // ★★★【修正点 3】★★★ `handleUnlock` の構造をクリーンアップ
-  const handleUnlock = () => {
+  // ★修正点2: handleUnlockをasyncに変更し、責務をシンプルにする
+  const handleUnlock = async () => {
     if (!audioContextRef.current) {
       try {
         const w = window as CustomWindow;
@@ -1203,27 +1194,41 @@ export default function ChatPage() {
         console.error("Failed to initialize AudioContext:", e);
       }
     }
-    audioContextRef.current?.resume();
-    setIsUnlocked(true);
 
-    if (isNewSession && !isSpeaking) {
+    try {
+      if (
+        audioContextRef.current &&
+        audioContextRef.current.state === "suspended"
+      ) {
+        await audioContextRef.current.resume();
+        console.log("AudioContext resumed successfully.");
+      }
+    } catch (e) {
+      console.error("Failed to resume AudioContext:", e);
+    }
+
+    setIsUnlocked(true);
+  };
+
+  // ★修正点3: 初回挨拶を再生するためのuseEffectを追加
+  useEffect(() => {
+    if (isUnlocked && isNewSession && !isSpeaking) {
       const firstMessage = messages[0];
       if (firstMessage?.audioUrl) {
         setBaseEmotion(firstMessage.emotion || "happy");
         setLiveMessage(firstMessage);
 
-        // ★★★【変更点】★★★ 発話後の状態リセットをsetTimeoutで1秒遅らせる
         playAudio(firstMessage.audioUrl, () => {
           setTimeout(() => {
             setBaseEmotion("neutral");
             setLiveMessage(null);
-          }, 1000); // 1秒のクールダウンを追加
+          }, 1000);
         });
 
         setIsNewSession(false);
       }
     }
-  };
+  }, [isUnlocked, isNewSession, isSpeaking, messages, playAudio]);
 
   const handleSendMessage = async (input: string) => {
     if (isLoading) return;
@@ -1269,7 +1274,6 @@ export default function ChatPage() {
       setBaseEmotion((data.emotion as Emotion) || "happy");
       if (data.audioData) {
         playAudio(data.audioData, () => {
-          // 発話後のクールダウン
           setTimeout(() => {
             setBaseEmotion("neutral");
             setLiveMessage(null);
@@ -1331,7 +1335,7 @@ export default function ChatPage() {
     setBaseEmotion("neutral");
     setIsHistoryOpen(false);
     setLiveMessage(null);
-    setIsNewSession(true); // リセット時は新規セッションに戻す
+    setIsNewSession(true);
   };
 
   const handleEndCall = () => {
