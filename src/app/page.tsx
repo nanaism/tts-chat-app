@@ -430,7 +430,7 @@ const VRMViewer = memo(
         } else {
           manager.setValue(VRMExpressionPresetName.Aa, 0);
 
-          const INITIAL_DELAY = 1.0;
+          const INITIAL_DELAY = 1.2;
           const lerpFactor = delta * 1.5;
 
           if (elapsedTime < INITIAL_DELAY) {
