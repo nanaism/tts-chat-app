@@ -14,13 +14,22 @@ export const {
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
     }),
   ],
+  // SupabaseAdapterを設定
   adapter: SupabaseAdapter({
     url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
     secret: process.env.SUPABASE_SERVICE_ROLE_KEY!,
   }),
-  // セッション戦略はアダプター利用の標準である 'database' を指定
+  callbacks: {
+    // セッションにユーザーIDを含める
+    async session({ session, user }) {
+      if (session.user) {
+        session.user.id = user.id;
+      }
+      return session;
+    },
+  },
   session: {
+    // アダプタ利用時は 'database' 戦略が一般的
     strategy: "database",
   },
-  // callbacks ブロックを一旦すべて削除して、アダプターのデフォルト動作に任せる
 });
