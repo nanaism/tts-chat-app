@@ -1,35 +1,59 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { FinishReason, GoogleGenAI, Type } from "@google/genai";
+import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import WavEncoder from "wav-encoder";
 import { aiPrompt } from "./constants";
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
-// ★ 追加: フロントエンドから渡されるメッセージの型を定義
-type FrontendMessage = {
-  role: "user" | "ai";
-  text: string;
+type HistoryMessage = {
+  role: "user" | "model";
+  parts: { text: string }[];
 };
 
 export async function POST(req: NextRequest) {
   try {
     const {
       message,
-      history,
       mode,
+      childId,
     }: {
       message: string;
-      history: FrontendMessage[]; // ★ 変更: 型を適用
       mode: "fast" | "slow";
+      childId: string;
     } = await req.json();
 
-    if (!message) {
+    if (!message || !childId) {
       return NextResponse.json(
-        { error: "メッセージがありません。" },
+        { error: "メッセージと子供IDは必須です。" },
         { status: 400 }
       );
     }
 
+    const { data: historyFromDb, error: historyError } = await supabaseAdmin
+      .from("conversations")
+      .select("role, content")
+      .eq("child_id", childId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (historyError) throw historyError;
+
+    const formattedHistory: HistoryMessage[] = historyFromDb
+      .reverse()
+      .map((msg) => ({
+        role: msg.role === "ai" ? "model" : "user",
+        parts: [{ text: msg.content }],
+      }));
+
+    const contents = [
+      ...formattedHistory,
+      { role: "user", parts: [{ text: aiPrompt + "\n\n" + message }] },
+    ];
     const isFastMode = mode === "fast";
     const textModel = isFastMode
       ? "gemini-2.5-flash-lite-preview-06-17"
@@ -38,29 +62,10 @@ export async function POST(req: NextRequest) {
       ? "gemini-2.5-flash-preview-tts"
       : "gemini-2.5-pro-preview-tts";
 
-    // --- ★ 変更点: ここから ---
-    // 1. 過去の会話履歴をGemini APIの形式に変換します。
-    // 'ai' ロールを 'model' にマッピングすることが重要です。
-    const formattedHistory = history.map((msg) => ({
-      role: msg.role === "ai" ? "model" : "user",
-      parts: [{ text: msg.text }],
-    }));
-
-    // 2. AIに渡す全会話コンテンツを構築します。
-    // プロンプトを先頭に、過去の履歴、そして最新のユーザーメッセージを結合します。
-    const contents = [
-      ...formattedHistory,
-      {
-        role: "user",
-        parts: [{ text: aiPrompt + "\n\n" + message }],
-      },
-    ];
-    // --- ★ 変更点: ここまで ---
-
     // --- テキストと感情を生成 ---
     const chatResult = await genAI.models.generateContent({
       model: textModel,
-      contents: contents, // ★ 変更点: 構築した全会話履歴を使用
+      contents: contents,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -68,7 +73,8 @@ export async function POST(req: NextRequest) {
           properties: {
             emotion: {
               type: Type.STRING,
-              description: "応答内容に最も合う感情をリストから選択したもの。",
+              description:
+                "応答内容に最も合う感情をリストから一つだけ選んでください。",
             },
             responseText: {
               type: Type.STRING,
@@ -80,19 +86,58 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const rawResponse = chatResult.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawResponse) {
-      throw new Error("AIから有効な応答を取得できませんでした。");
+    let aiResponse: { emotion: string; responseText: string };
+
+    // 1. まず、AIからの生の応答全体をログに出力してみる
+    console.log(
+      "Full chatResult from Gemini:",
+      JSON.stringify(chatResult, null, 2)
+    );
+
+    // 2. セーフティフィルターが作動したかチェック
+    if (chatResult.candidates?.[0]?.finishReason === FinishReason.SAFETY) {
+      console.log("Safety filter triggered. Providing a safe response.");
+      aiResponse = {
+        emotion: "sad",
+        responseText:
+          "そっか、そんな気持ちなんだね。話してくれてありがとう。どんなことでも、あなたの味方だからね。",
+      };
+    } else {
+      const rawResponse = chatResult.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawResponse) {
+        throw new Error("AIから有効な応答を取得できませんでした。");
+      }
+
+      // 3. パースする前の生のJSON文字列もログに出力
+      console.log("Raw JSON response from AI:", rawResponse);
+
+      aiResponse = JSON.parse(rawResponse);
     }
 
-    const aiResponse = JSON.parse(rawResponse);
-    const { emotion, responseText } = aiResponse;
+    // 4. 最終的に採用された感情とテキストをログに出力
+    console.log("Final emotion and responseText:", aiResponse);
 
+    const { emotion, responseText } = aiResponse;
     if (!responseText || !emotion) {
       throw new Error("AIからの応答形式が正しくありません。");
     }
 
-    // --- 音声生成 ---
+    await Promise.all([
+      supabaseAdmin
+        .from("conversations")
+        .insert({ child_id: childId, role: "user", content: message }),
+      supabaseAdmin
+        .from("conversations")
+        .insert({
+          child_id: childId,
+          role: "ai",
+          content: responseText,
+          emotion: emotion,
+        }),
+    ]).catch((dbError) =>
+      console.error("DB insert failed but continuing:", dbError)
+    );
+
     const ttsResponse = await genAI.models.generateContent({
       model: ttsModel,
       contents: [{ parts: [{ text: responseText }] }],
@@ -113,7 +158,6 @@ export async function POST(req: NextRequest) {
       throw new Error("Gemini APIから有効な音声データが返されませんでした。");
     }
 
-    // --- WAV形式への変換処理 ---
     const sampleRate = 24000;
     const pcmData = Buffer.from(audioBase64, "base64");
     const pcm_i16 = new Int16Array(
@@ -131,7 +175,6 @@ export async function POST(req: NextRequest) {
     });
     const wavBase64 = Buffer.from(wavData).toString("base64");
 
-    // --- レスポンスを返す ---
     return NextResponse.json({
       emotion: emotion,
       textResponse: responseText,

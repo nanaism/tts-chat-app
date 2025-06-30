@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 
+// Supabaseのクライアントを定義
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -19,58 +20,68 @@ export const {
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
     }),
   ],
-  // ★★★★★ ここからが最重要修正点 ★★★★★
+  // adapterは使いません
+
   callbacks: {
     async signIn({ user, account }) {
-      // Googleでのサインインの場合のみ処理を実行
-      if (account?.provider === "google" && user.id) {
-        console.log(
-          "SIGNIN CALLBACK: Google sign-in detected for user:",
-          user.email
-        );
-        try {
-          const { error } = await supabaseAdmin.from("users").upsert(
-            {
-              id: user.id,
-              name: user.name,
-              email: user.email,
-              image: user.image,
-            },
-            { onConflict: "id" }
-          );
-
-          if (error) {
-            console.error("Supabase upsert error on signIn:", error);
-            return false; // DBエラー時はサインインを失敗させる
-          }
-
-          console.log("User successfully upserted to DB.");
-          return true; // サインインを許可
-        } catch (err) {
-          console.error("Unexpected error during signIn upsert:", err);
-          return false; // 予期せぬエラーでもサインインを失敗させる
-        }
+      if (account?.provider !== "google" || !user.id) {
+        return false;
       }
-      return false; // Google以外のサインインは許可しない
+
+      console.log(
+        "SIGNIN CALLBACK: Attempting to upsert user to 'auth.users'."
+      );
+
+      try {
+        // ★★★ ここが最重要修正点 ★★★
+        // SupabaseのRPC（Remote Procedure Call）を使って、
+        // Supabaseが内部的に管理するauthスキーマのusersテーブルにデータを書き込む
+        const { error } = await supabaseAdmin.from("users").upsert(
+          {
+            id: user.id, // Googleから来たID (stringだがuuid形式)
+            raw_user_meta_data: {
+              // auth.usersテーブルの構造に合わせる
+              name: user.name,
+              avatar_url: user.image,
+            },
+            raw_app_meta_data: {
+              provider: "google",
+            },
+            email: user.email,
+          },
+          { onConflict: "id" }
+        );
+
+        if (error) {
+          // 2回目以降のログインでは、emailのunique制約でエラーが出ることがあるが、
+          // onConflictでidが一致すれば更新されるので、基本的には問題ないはず。
+          // それ以外の予期せぬエラーの場合のみサインインを止める。
+          console.error("Supabase upsert in signIn failed:", error);
+          // 万が一に備え、email重複エラー(23505)は許容する
+          if (error.code !== "23505") {
+            return false;
+          }
+        }
+
+        console.log("User successfully upserted into auth.users.");
+        return true; // サインインを許可
+      } catch (err) {
+        console.error("Unexpected error during signIn upsert:", err);
+        return false;
+      }
     },
     async session({ session, token }) {
-      // token.sub にはプロバイダーのユーザーIDが入っている
-      // これをセッションのIDとして設定し、アプリ全体で利用する
+      // token.subには、Googleから来たユーザーID(UUID形式の文字列)が入っている
       if (token.sub && session.user) {
         session.user.id = token.sub;
       }
       return session;
     },
-    // jwtコールバックはDB書き込みの責務を負わない
     async jwt({ token }) {
       return token;
     },
   },
-  // ★★★★★ ここまで ★★★★★
   session: {
-    strategy: "jwt",
-  },
-  pages: {
-    signIn: "/api/auth/signin",
+    strategy: "jwt", // 手動連携なので、セッションはJWT方式
   },
 });

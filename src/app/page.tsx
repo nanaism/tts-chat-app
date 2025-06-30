@@ -1,57 +1,45 @@
 "use client";
 
-import { app_version } from "@/app/api/chat/constants";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  VRM,
-  VRMExpressionPresetName,
-  VRMHumanBoneName,
-  VRMLoaderPlugin,
-} from "@pixiv/three-vrm";
-import { Html, OrbitControls } from "@react-three/drei";
-import { Canvas, ThreeEvent, useFrame, useLoader } from "@react-three/fiber";
-import { AnimatePresence, motion } from "framer-motion";
-import {
-  Heart,
-  History,
-  Loader,
-  Phone,
-  PhoneOff,
-  Rabbit,
-  Send,
-  Settings,
-  Sparkles,
-  Star,
-  Trash,
-  Turtle,
-  X,
-} from "lucide-react";
+import type { VRMExpressionPresetName } from "@pixiv/three-vrm";
+import type { ThreeEvent } from "@react-three/fiber";
+import { AnimatePresence } from "framer-motion";
 import { Kiwi_Maru } from "next/font/google";
-import {
-  KeyboardEvent,
-  memo,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import * as THREE from "three";
-import {
-  GLTFLoader,
-  GLTFParser,
-} from "three/examples/jsm/loaders/GLTFLoader.js";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { QrCode } from "lucide-react"; // ★ アイコンをインポート
-import { useRouter } from "next/navigation"; // ★ useRouterをインポート
+// 分割したコンポーネントをインポート
+import { ControlBarFooter } from "@/components/features/chat/controllers/ControlBarFooter";
+import { PreLoginScreen } from "@/components/features/chat/controllers/PreLoginScreen";
+import { SettingsDialog } from "@/components/features/chat/controllers/SettingsDialog";
+import { UnlockScreen } from "@/components/features/chat/controllers/UnlockScreen";
+import { ChatHistoryOverlay } from "@/components/features/chat/ui/ChatHistoryOverlay";
+import { LiveMessageBubble } from "@/components/features/chat/ui/LiveMessageBubble";
+import { ThinkingUI } from "@/components/features/chat/ui/ThinkingUI"; // ★ ThinkingUIをインポート
+import { VRMCanvas } from "@/components/features/chat/vrm/VRMCanvas";
+import * as THREE from "three"; // ★ THREEをインポート
 
+// 型定義
+type Message = {
+  id: number;
+  role: "user" | "ai";
+  text: string;
+  audioData?: string;
+  audioUrl?: string;
+  emotion?: Emotion;
+};
+type Emotion = VRMExpressionPresetName | "thinking";
+interface CustomWindow {
+  AudioContext?: typeof AudioContext;
+  webkitAudioContext?: typeof AudioContext;
+}
+
+// 定数
 const cuteFont = Kiwi_Maru({
   weight: ["400", "500"],
   subsets: ["latin"],
   display: "swap",
 });
+const CHILD_ID_STORAGE_KEY = "near-child-id";
+const THINK_MODE_KEY = "near-think-mode";
 
 // 起動時のランダムメッセージと音声ファイルのリスト
 const initialMessages = [
@@ -71,7 +59,6 @@ const initialMessages = [
     audioUrl: "/sounds/greeting4.wav",
   },
 ];
-
 // 終了時の音声メッセージのリスト
 const goodbyeMessages = [
   {
@@ -91,1121 +78,7 @@ const goodbyeMessages = [
   },
 ];
 
-type Message = {
-  id: number;
-  role: "user" | "ai";
-  text: string;
-  audioData?: string;
-  audioUrl?: string;
-  emotion?: Emotion;
-};
-type Emotion = VRMExpressionPresetName | "thinking";
-
-interface CustomWindow {
-  AudioContext?: typeof AudioContext;
-  webkitAudioContext?: typeof AudioContext;
-}
-
-const TapEffect = ({
-  id,
-  position,
-  onComplete,
-}: {
-  id: number;
-  position: THREE.Vector3;
-  onComplete: (id: number) => void;
-}) => {
-  const groupRef = useRef<THREE.Group>(null!);
-
-  const particles = useMemo(() => {
-    const particleCount = 20;
-    const initialSpeed = 0.4;
-    const lifetime = 0.4;
-
-    return Array.from({ length: particleCount }).map(() => {
-      const velocity = new THREE.Vector3(
-        (Math.random() - 0.5) * 2,
-        (Math.random() - 0.5) * 2,
-        (Math.random() - 0.5) * 2
-      )
-        .normalize()
-        .multiplyScalar(initialSpeed * (Math.random() * 0.5 + 0.5));
-
-      const particleLifetime = lifetime * (Math.random() * 0.7 + 0.3);
-
-      return {
-        velocity,
-        color: new THREE.Color().setHSL(Math.random(), 1.0, 0.5),
-        lifetime: particleLifetime,
-        initialLifetime: particleLifetime,
-        scale: Math.random() * 0.04 + 0.02,
-        currentPosition: new THREE.Vector3(),
-      };
-    });
-  }, []);
-
-  useFrame((state, delta) => {
-    if (!groupRef.current) return;
-    let allParticlesDead = true;
-
-    particles.forEach((p, i) => {
-      const mesh = groupRef.current.children[i] as THREE.Mesh;
-      if (!mesh || p.lifetime <= 0) {
-        if (mesh) mesh.visible = false;
-        return;
-      }
-
-      allParticlesDead = false;
-      p.lifetime -= delta;
-
-      p.velocity.multiplyScalar(0.95);
-      p.velocity.y -= 9.8 * delta * 0.15;
-
-      p.currentPosition.add(p.velocity.clone().multiplyScalar(delta));
-      mesh.position.copy(p.currentPosition);
-
-      const lifePercent = Math.max(0, p.lifetime / p.initialLifetime);
-      const currentScale = p.scale * Math.sin(lifePercent * Math.PI);
-      mesh.scale.set(currentScale, currentScale, currentScale);
-    });
-
-    if (allParticlesDead) {
-      onComplete(id);
-    }
-  });
-
-  return (
-    <group position={position} ref={groupRef}>
-      {particles.map((p, i) => (
-        <mesh key={i}>
-          <sphereGeometry args={[0.1, 6, 6]} />
-          <meshBasicMaterial
-            color={p.color}
-            transparent
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-          />
-        </mesh>
-      ))}
-    </group>
-  );
-};
-
-const ModelLoader = () => {
-  const containerVariants = {
-    hidden: { opacity: 0, scale: 0.9 },
-    visible: {
-      opacity: 1,
-      scale: 1,
-      transition: {
-        duration: 0.4,
-        staggerChildren: 0.1,
-      },
-    },
-  };
-  const itemVariants = {
-    hidden: { opacity: 0, y: 10 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      transition: { ease: "easeOut" as const, duration: 0.5 },
-    },
-  };
-
-  return (
-    <Html center>
-      <motion.div
-        variants={containerVariants}
-        initial="hidden"
-        animate="visible"
-        className="flex flex-col items-center justify-center gap-6"
-      >
-        <div className="relative w-48 h-48 flex items-center justify-center">
-          <motion.div
-            className="absolute inset-0 animate-spin"
-            style={{ animationDuration: "8s" }}
-          >
-            <div className="absolute top-0 left-1/2 -translate-x-1/2">
-              <Heart className="w-8 h-8 text-pink-300" fill="currentColor" />
-            </div>
-            <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
-              <Star className="w-7 h-7 text-yellow-300" fill="currentColor" />
-            </div>
-            <div className="absolute left-0 top-1/2 -translate-y-1/2">
-              <Sparkles className="w-7 h-7 text-sky-300" fill="currentColor" />
-            </div>
-            <div className="absolute right-0 top-1/2 -translate-y-1/2">
-              <Star className="w-8 h-8 text-violet-300" fill="currentColor" />
-            </div>
-          </motion.div>
-
-          <motion.div
-            animate={{ scale: [1, 1.1, 1], opacity: [0.8, 1, 0.8] }}
-            transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-          >
-            <Star className="w-20 h-20 text-pink-400" fill="currentColor" />
-          </motion.div>
-        </div>
-        <motion.p
-          variants={itemVariants}
-          className={`text-lg font-semibold text-gray-700 bg-white/40 backdrop-blur-md px-4 py-2 rounded-full`}
-        >
-          まほうのじゅんびちゅう…
-        </motion.p>
-      </motion.div>
-    </Html>
-  );
-};
-
-const VRMViewer = memo(
-  ({
-    emotion,
-    analyser,
-    isSpeaking,
-    onHeadClick,
-  }: {
-    emotion: Emotion;
-    analyser: AnalyserNode | null;
-    isSpeaking: boolean;
-    onHeadClick: (event: ThreeEvent<MouseEvent>) => void;
-  }) => {
-    const gltf = useLoader(GLTFLoader, "/avatar.vrm", (loader) => {
-      loader.register((parser: GLTFParser) => new VRMLoaderPlugin(parser));
-    });
-    const vrmRef = useRef<VRM | null>(null);
-    const restingArmRad = useRef(Math.PI * (-70 / 180));
-    const interactionRef = useRef<THREE.Mesh>(null);
-
-    const startTimeRef = useRef(0);
-
-    const blinkState = useRef({
-      isBlinking: false,
-      lastBlinkTime: 0,
-      nextBlinkDelay: 3.0,
-    });
-
-    useEffect(() => {
-      if (!gltf.userData.vrm) return;
-      const vrm = gltf.userData.vrm;
-      vrmRef.current = vrm;
-
-      vrm.humanoid
-        .getNormalizedBoneNode(VRMHumanBoneName.Head)!
-        .rotation.set(0, 0, 0);
-      vrm.humanoid
-        .getNormalizedBoneNode(VRMHumanBoneName.Neck)!
-        .rotation.set(0, 0, 0);
-      vrm.humanoid
-        .getNormalizedBoneNode(VRMHumanBoneName.Spine)!
-        .rotation.set(0, 0, 0);
-
-      const rightUpperArm = vrm.humanoid?.getNormalizedBoneNode(
-        VRMHumanBoneName.RightUpperArm
-      );
-      const leftUpperArm = vrm.humanoid?.getNormalizedBoneNode(
-        VRMHumanBoneName.LeftUpperArm
-      );
-      if (rightUpperArm && leftUpperArm) {
-        rightUpperArm.rotation.z = -restingArmRad.current;
-        leftUpperArm.rotation.z = restingArmRad.current;
-      }
-
-      if (vrm.springBoneManager) {
-        vrm.springBoneManager.reset();
-      }
-    }, [gltf]);
-
-    useEffect(() => {
-      const handleVisibilityChange = () => {
-        if (document.visibilityState === "visible") {
-          if (vrmRef.current?.springBoneManager) {
-            vrmRef.current.springBoneManager.reset();
-          }
-          startTimeRef.current = 0;
-        }
-      };
-
-      document.addEventListener("visibilitychange", handleVisibilityChange);
-      return () => {
-        document.removeEventListener(
-          "visibilitychange",
-          handleVisibilityChange
-        );
-      };
-    }, []);
-
-    useFrame((state, delta) => {
-      const clampedDelta = Math.min(delta, 1 / 20);
-
-      const vrm = vrmRef.current;
-      if (!vrm?.expressionManager || !vrm.humanoid) return;
-
-      const manager = vrm.expressionManager;
-      const humanoid = vrm.humanoid;
-      const clockTime = state.clock.elapsedTime;
-      const head = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Head);
-      const neck = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Neck);
-      const spine = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Spine);
-      const chest = humanoid.getNormalizedBoneNode(VRMHumanBoneName.Chest);
-
-      const breathingCycle = Math.sin(clockTime * 0.8);
-      const breathingAmount = ((breathingCycle + 1) / 2) * 0.04;
-
-      if (startTimeRef.current === 0) {
-        startTimeRef.current = clockTime;
-        blinkState.current.lastBlinkTime = 0;
-      }
-      const elapsedTime = clockTime - startTimeRef.current;
-
-      if (head && interactionRef.current) {
-        const headPosition = new THREE.Vector3();
-        head.getWorldPosition(headPosition);
-        interactionRef.current.position.copy(headPosition);
-        interactionRef.current.position.y += 0.15;
-      }
-
-      if (emotion === "thinking") {
-        manager.setValue(VRMExpressionPresetName.Blink, 1.0);
-      } else {
-        let blinkValue = 0;
-        const blinkManager = blinkState.current;
-        const blinkDuration = 0.1;
-
-        if (blinkManager.isBlinking) {
-          const progress =
-            (elapsedTime - blinkManager.lastBlinkTime) / blinkDuration;
-          if (progress >= 1) {
-            blinkManager.isBlinking = false;
-            blinkValue = 0;
-          } else {
-            blinkValue = Math.sin(progress * Math.PI);
-          }
-        } else {
-          if (
-            elapsedTime - blinkManager.lastBlinkTime >
-            blinkManager.nextBlinkDelay
-          ) {
-            blinkManager.isBlinking = true;
-            blinkManager.lastBlinkTime = elapsedTime;
-            blinkManager.nextBlinkDelay = 2.0 + Math.random() * 5.0;
-          }
-        }
-        manager.setValue(VRMExpressionPresetName.Blink, blinkValue);
-      }
-
-      if (emotion === "thinking") {
-        if (gltf.scene)
-          gltf.scene.position.y = THREE.MathUtils.lerp(
-            gltf.scene.position.y,
-            -0.1,
-            clampedDelta * 3.0
-          );
-        if (head) {
-          head.rotation.x = THREE.MathUtils.lerp(
-            head.rotation.x,
-            0,
-            clampedDelta * 2.0
-          );
-          head.rotation.y = THREE.MathUtils.lerp(
-            head.rotation.y,
-            0,
-            clampedDelta * 2.0
-          );
-          head.rotation.z = THREE.MathUtils.lerp(
-            head.rotation.z,
-            Math.PI / 18,
-            clampedDelta * 3.0
-          );
-        }
-        if (neck)
-          neck.rotation.y = THREE.MathUtils.lerp(
-            neck.rotation.y,
-            0,
-            clampedDelta * 2.0
-          );
-
-        if (spine)
-          spine.rotation.y = THREE.MathUtils.lerp(
-            spine.rotation.y,
-            Math.sin(clockTime * 0.3) * 0.1,
-            clampedDelta * 2.0
-          );
-
-        if (chest) {
-          chest.rotation.x = THREE.MathUtils.lerp(
-            chest.rotation.x,
-            breathingAmount,
-            clampedDelta * 2.0
-          );
-        }
-
-        manager.setValue(VRMExpressionPresetName.Happy, 0);
-        manager.setValue(
-          VRMExpressionPresetName.Neutral,
-          THREE.MathUtils.lerp(
-            manager.getValue(VRMExpressionPresetName.Neutral) ?? 0,
-            0.5,
-            clampedDelta * 5.0
-          )
-        );
-        manager.setValue(
-          VRMExpressionPresetName.Oh,
-          THREE.MathUtils.lerp(
-            manager.getValue(VRMExpressionPresetName.Oh) ?? 0,
-            0.15,
-            clampedDelta * 5.0
-          )
-        );
-        manager.setValue(
-          VRMExpressionPresetName.Sad,
-          THREE.MathUtils.lerp(
-            manager.getValue(VRMExpressionPresetName.Sad) ?? 0,
-            0.3,
-            clampedDelta * 5.0
-          )
-        );
-        manager.setValue(VRMExpressionPresetName.Aa, 0);
-      } else {
-        manager.setValue(VRMExpressionPresetName.Sad, 0);
-
-        if (head)
-          head.rotation.z = THREE.MathUtils.lerp(
-            head.rotation.z,
-            0,
-            clampedDelta * 3.0
-          );
-
-        const rightUpperArm = humanoid.getNormalizedBoneNode(
-          VRMHumanBoneName.RightUpperArm
-        );
-        const leftUpperArm = humanoid.getNormalizedBoneNode(
-          VRMHumanBoneName.LeftUpperArm
-        );
-        if (rightUpperArm && leftUpperArm) {
-          rightUpperArm.rotation.z = THREE.MathUtils.lerp(
-            rightUpperArm.rotation.z,
-            -restingArmRad.current,
-            clampedDelta * 5.0
-          );
-          leftUpperArm.rotation.z = THREE.MathUtils.lerp(
-            leftUpperArm.rotation.z,
-            restingArmRad.current,
-            clampedDelta * 5.0
-          );
-        }
-
-        for (const preset of Object.values(VRMExpressionPresetName)) {
-          if (
-            typeof preset !== "string" ||
-            preset === VRMExpressionPresetName.Blink ||
-            preset === VRMExpressionPresetName.Sad
-          )
-            continue;
-          const targetWeight = preset === emotion ? 1.0 : 0.0;
-          const currentWeight = manager.getValue(preset) ?? 0.0;
-          manager.setValue(
-            preset,
-            THREE.MathUtils.lerp(
-              currentWeight,
-              targetWeight,
-              clampedDelta * 10.0
-            )
-          );
-        }
-
-        if (isSpeaking && analyser) {
-          const data = new Uint8Array(analyser.frequencyBinCount);
-          analyser.getByteFrequencyData(data);
-          const volume = data.reduce((a, b) => a + b, 0) / data.length;
-          manager.setValue(
-            VRMExpressionPresetName.Aa,
-            Math.min(1.0, (volume / 100) ** 1.5)
-          );
-
-          const lerpFactor = clampedDelta * 2.0;
-          let targetChestRotationX = 0;
-
-          switch (emotion) {
-            case VRMExpressionPresetName.Happy:
-              if (gltf.scene)
-                gltf.scene.position.y = THREE.MathUtils.lerp(
-                  gltf.scene.position.y,
-                  -0.1 + Math.abs(Math.sin(elapsedTime * 2.5) * 0.02),
-                  lerpFactor
-                );
-              if (spine)
-                spine.rotation.y = THREE.MathUtils.lerp(
-                  spine.rotation.y,
-                  Math.sin(elapsedTime * 1.8) * 0.15,
-                  lerpFactor
-                );
-              if (head)
-                head.rotation.x = THREE.MathUtils.lerp(
-                  head.rotation.x,
-                  Math.sin(elapsedTime * 1.8) * 0.08,
-                  lerpFactor
-                );
-              break;
-            case VRMExpressionPresetName.Sad:
-              targetChestRotationX = 0.15;
-              if (head)
-                head.rotation.x = THREE.MathUtils.lerp(
-                  head.rotation.x,
-                  0.1,
-                  lerpFactor
-                );
-              break;
-            default:
-              if (gltf.scene)
-                gltf.scene.position.y = THREE.MathUtils.lerp(
-                  gltf.scene.position.y,
-                  -0.1 + Math.sin(elapsedTime * 0.5) * 0.01,
-                  lerpFactor
-                );
-              if (spine)
-                spine.rotation.y = THREE.MathUtils.lerp(
-                  spine.rotation.y,
-                  0,
-                  lerpFactor
-                );
-              if (head)
-                head.rotation.x = THREE.MathUtils.lerp(
-                  head.rotation.x,
-                  0,
-                  lerpFactor
-                );
-              break;
-          }
-          if (chest) {
-            chest.rotation.x = THREE.MathUtils.lerp(
-              chest.rotation.x,
-              targetChestRotationX + breathingAmount,
-              lerpFactor
-            );
-          }
-        } else {
-          manager.setValue(VRMExpressionPresetName.Aa, 0);
-
-          const INITIAL_DELAY = 1.0;
-          const lerpFactor = clampedDelta * 1.5;
-
-          if (elapsedTime < INITIAL_DELAY) {
-            if (gltf.scene)
-              gltf.scene.position.y = THREE.MathUtils.lerp(
-                gltf.scene.position.y,
-                -0.1,
-                lerpFactor
-              );
-            if (spine)
-              spine.rotation.y = THREE.MathUtils.lerp(
-                spine.rotation.y,
-                0,
-                lerpFactor
-              );
-            if (neck)
-              neck.rotation.y = THREE.MathUtils.lerp(
-                neck.rotation.y,
-                0,
-                lerpFactor
-              );
-            if (head)
-              head.rotation.x = THREE.MathUtils.lerp(
-                head.rotation.x,
-                0,
-                lerpFactor
-              );
-          } else {
-            const animationTime = elapsedTime - INITIAL_DELAY;
-            const targetFloatY = -0.1 + Math.sin(animationTime * 0.5) * 0.012;
-            const targetSpineY =
-              Math.sin(animationTime * 0.4) * 0.15 +
-              Math.sin(animationTime * 0.25) * 0.1;
-            const targetNeckY =
-              Math.sin(animationTime * 0.6) * 0.3 +
-              Math.sin(animationTime * 0.8) * 0.2;
-            const targetHeadX = Math.sin(animationTime * 0.55) * 0.08;
-
-            if (gltf.scene)
-              gltf.scene.position.y = THREE.MathUtils.lerp(
-                gltf.scene.position.y,
-                targetFloatY,
-                lerpFactor
-              );
-            if (spine)
-              spine.rotation.y = THREE.MathUtils.lerp(
-                spine.rotation.y,
-                targetSpineY,
-                lerpFactor
-              );
-            if (neck)
-              neck.rotation.y = THREE.MathUtils.lerp(
-                neck.rotation.y,
-                targetNeckY,
-                lerpFactor
-              );
-            if (head)
-              head.rotation.x = THREE.MathUtils.lerp(
-                head.rotation.x,
-                targetHeadX,
-                lerpFactor
-              );
-
-            if (chest) {
-              chest.rotation.x = THREE.MathUtils.lerp(
-                chest.rotation.x,
-                breathingAmount,
-                lerpFactor
-              );
-            }
-          }
-        }
-      }
-      vrm.update(clampedDelta);
-    });
-
-    return (
-      <>
-        <primitive object={gltf.scene} position={[0, -0.1, 0]} />
-        <mesh
-          ref={interactionRef}
-          onClick={(e) => {
-            e.stopPropagation();
-            onHeadClick(e);
-          }}
-          onPointerOver={() => (document.body.style.cursor = "pointer")}
-          onPointerOut={() => (document.body.style.cursor = "auto")}
-        >
-          <sphereGeometry args={[0.25, 16, 16]} />
-          <meshBasicMaterial visible={false} />
-        </mesh>
-      </>
-    );
-  }
-);
-VRMViewer.displayName = "VRMViewer";
-
-const VRMCanvas = memo(
-  ({
-    emotion,
-    analyser,
-    isSpeaking,
-    onHeadClick,
-    effects,
-    onEffectComplete,
-  }: {
-    emotion: Emotion;
-    analyser: AnalyserNode | null;
-    isSpeaking: boolean;
-    onHeadClick: (event: ThreeEvent<MouseEvent>) => void;
-    effects: Array<{ id: number; position: THREE.Vector3 }>;
-    onEffectComplete: (id: number) => void;
-  }) => {
-    return (
-      <Canvas
-        shadows
-        camera={{ position: [0, 1.5, 1.5], fov: 25 }}
-        className="w-full h-full touch-none"
-        dpr={[1, 1.5]}
-      >
-        <ambientLight intensity={1.5} />
-        <directionalLight
-          position={[5, 5, 5]}
-          intensity={2.5}
-          castShadow
-          shadow-mapSize-width={1024}
-          shadow-mapSize-height={1024}
-        />
-        <Suspense fallback={<ModelLoader />}>
-          <VRMViewer
-            emotion={emotion}
-            analyser={analyser}
-            isSpeaking={isSpeaking}
-            onHeadClick={onHeadClick}
-          />
-          {effects.map((effect) => (
-            <TapEffect
-              key={effect.id}
-              id={effect.id}
-              position={effect.position}
-              onComplete={onEffectComplete}
-            />
-          ))}
-        </Suspense>
-        <OrbitControls
-          target={[0, 1.2, 0]}
-          enableZoom={false}
-          enablePan={false}
-        />
-      </Canvas>
-    );
-  }
-);
-VRMCanvas.displayName = "VRMCanvas";
-
-const MessageBubble = memo(({ msg }: { msg: Message }) => {
-  const isUser = msg.role === "user";
-  return (
-    <motion.div
-      className={`flex items-end gap-2 w-full ${
-        isUser ? "justify-end" : "justify-start"
-      }`}
-      layout
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: "easeOut" }}
-    >
-      {!isUser && (
-        <div className="w-8 h-8 rounded-full flex-shrink-0 bg-gradient-to-br from-pink-400 to-violet-500 shadow-lg" />
-      )}
-      <div
-        className={`max-w-[85%] rounded-2xl p-3 shadow-md text-base leading-relaxed break-words ${
-          isUser ? "bg-cyan-500 text-white" : "bg-white/90 text-gray-800"
-        }`}
-      >
-        {msg.text}
-      </div>
-    </motion.div>
-  );
-});
-MessageBubble.displayName = "MessageBubble";
-
-const TypingIndicator = memo(() => (
-  <motion.div
-    className="flex items-end gap-2"
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    exit={{ opacity: 0, transition: { duration: 0.1 } }}
-  >
-    <div className="w-8 h-8 rounded-full flex-shrink-0 bg-gradient-to-br from-pink-400 to-violet-500" />
-    <div className="flex items-center space-x-1.5 p-3 bg-white/90 rounded-2xl shadow-md">
-      {[...Array(3)].map((_, i) => (
-        <motion.div
-          key={i}
-          className="w-2 h-2 bg-pink-400 rounded-full"
-          animate={{ y: [0, -4, 0] }}
-          transition={{
-            duration: 1.2,
-            repeat: Infinity,
-            ease: "easeInOut",
-            delay: i * 0.2,
-          }}
-        />
-      ))}
-    </div>
-  </motion.div>
-));
-TypingIndicator.displayName = "TypingIndicator";
-
-const ChatHistoryOverlay = memo(
-  ({
-    messages,
-    isLoading,
-    onClose,
-    onReset,
-  }: {
-    messages: Message[];
-    isLoading: boolean;
-    onClose: () => void;
-    onReset: () => void;
-  }) => {
-    const scrollEndRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-      scrollEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages, isLoading]);
-
-    return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.3, ease: "easeOut" }}
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm z-20 flex flex-col justify-end"
-        onClick={onClose}
-      >
-        <motion.div
-          initial={{ opacity: 0, y: 50 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 50 }}
-          transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
-          className="h-[85%] bg-white/90 rounded-t-3xl shadow-2xl flex flex-col overflow-hidden"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex-shrink-0 p-3 border-b flex justify-between items-center">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-              className="rounded-full text-gray-500"
-              aria-label="閉じる"
-            >
-              <X size={24} />
-            </Button>
-            <h2 className="font-bold text-lg text-gray-700">
-              おはなしのきろく
-            </h2>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onReset}
-              className="rounded-full text-gray-500"
-              aria-label="履歴をリセット"
-              disabled={isLoading || messages.length <= 1}
-            >
-              <Trash size={20} />
-            </Button>
-          </div>
-          <div className="flex-1 p-4 overflow-y-auto">
-            <div className="space-y-4 pb-4">
-              {messages.map((msg) => (
-                <MessageBubble key={msg.id} msg={msg} />
-              ))}
-              {isLoading && <TypingIndicator />}
-              <div ref={scrollEndRef} />
-            </div>
-          </div>
-        </motion.div>
-      </motion.div>
-    );
-  }
-);
-ChatHistoryOverlay.displayName = "ChatHistoryOverlay";
-
-const LiveMessageBubble = memo(({ message }: { message: Message }) => {
-  return (
-    <div className="absolute inset-x-0 bottom-0 p-4 pb-6 flex flex-col items-center justify-end pointer-events-none z-10">
-      <motion.div
-        layout
-        initial={{ opacity: 0, y: 20, scale: 0.9 }}
-        animate={{
-          opacity: 1,
-          y: 0,
-          scale: 1,
-          transition: { type: "spring", damping: 20, stiffness: 300 },
-        }}
-        exit={{ opacity: 0, y: 10, scale: 0.9, transition: { duration: 0.2 } }}
-        className="relative max-w-sm md:max-w-md bg-white/80 backdrop-blur-lg rounded-2xl p-4 text-center text-gray-800 shadow-xl pointer-events-auto"
-      >
-        <div
-          className="absolute left-1/2 -top-2 w-4 h-4 bg-inherit transform -translate-x-1/2 rotate-45"
-          style={{ zIndex: -1 }}
-        ></div>
-        <p className="break-words">{message.text}</p>
-      </motion.div>
-    </div>
-  );
-});
-LiveMessageBubble.displayName = "LiveMessageBubble";
-
-const ThinkingIndicator = memo(() => {
-  return (
-    <div className="absolute inset-0 flex justify-center items-center pointer-events-none z-20">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.9 }}
-        transition={{ duration: 0.2 }}
-        className="flex items-center gap-3 bg-black/30 text-white/90 backdrop-blur-sm rounded-full px-4 py-2"
-      >
-        <p>考え中…</p>
-        <motion.div
-          className="w-2 h-2 bg-white rounded-full"
-          animate={{ scale: [1, 1.5, 1], opacity: [0.8, 1, 0.8] }}
-          transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-        />
-      </motion.div>
-    </div>
-  );
-});
-ThinkingIndicator.displayName = "ThinkingIndicator";
-
-const ControlBarFooter = memo(
-  ({
-    onSendMessage,
-    onHistoryClick,
-    onEndCallClick,
-    onSettingsClick,
-    isLoading,
-  }: {
-    onSendMessage: (input: string) => void;
-    onHistoryClick: () => void;
-    onEndCallClick: () => void;
-    onSettingsClick: () => void;
-    isLoading: boolean;
-  }) => {
-    const [input, setInput] = useState("");
-    const handleSend = () => {
-      const trimmed = input.trim();
-      if (trimmed && !isLoading) {
-        onSendMessage(trimmed);
-        setInput("");
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-        e.preventDefault();
-        handleSend();
-      }
-    };
-    return (
-      <footer className="p-3 bg-white/40 backdrop-blur-lg border-t flex-shrink-0 z-10">
-        <div className="flex w-full items-center space-x-2">
-          <motion.div whileTap={{ scale: 0.9 }}>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onHistoryClick}
-              disabled={isLoading}
-              className="rounded-full text-gray-600 w-8 h-8"
-              aria-label="履歴を表示"
-            >
-              <History size={24} />
-            </Button>
-          </motion.div>
-          <motion.div whileTap={{ scale: 0.9 }}>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onSettingsClick}
-              disabled={isLoading}
-              className="rounded-full text-gray-600 w-8 h-8"
-              aria-label="設定"
-            >
-              <Settings size={22} />
-            </Button>
-          </motion.div>
-
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="ここに入力してね..."
-            disabled={isLoading}
-            className="flex-1 bg-white/80 rounded-full h-12 px-5"
-          />
-          <motion.div whileTap={{ scale: 0.9 }}>
-            <Button
-              type="button"
-              onClick={handleSend}
-              disabled={isLoading || !input.trim()}
-              className="w-12 h-12 rounded-full bg-gradient-to-br from-pink-500 to-violet-600 text-white shadow-lg"
-              aria-label="送信"
-            >
-              <AnimatePresence mode="popLayout">
-                {isLoading ? (
-                  <motion.div
-                    key="loader"
-                    initial={{ opacity: 0, scale: 0.5 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.5 }}
-                  >
-                    <Loader className="h-6 w-6 animate-spin" />
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="send"
-                    initial={{ opacity: 0, scale: 0.5 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.5 }}
-                  >
-                    <Send className="h-6 w-6" />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </Button>
-          </motion.div>
-          <motion.div whileTap={{ scale: 0.9 }}>
-            <Button
-              type="button"
-              onClick={onEndCallClick}
-              disabled={isLoading}
-              className="w-12 h-12 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-lg"
-              aria-label="おはなしをやめる"
-            >
-              <PhoneOff className="h-6 w-6" />
-            </Button>
-          </motion.div>
-        </div>
-      </footer>
-    );
-  }
-);
-ControlBarFooter.displayName = "ControlBarFooter";
-
-const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
-  <div className="absolute inset-0 bg-gradient-to-br from-sky-100 via-rose-100 to-violet-200 flex flex-col justify-center items-center z-50 p-4 text-center">
-    <motion.div
-      initial={{ opacity: 0, scale: 0.8 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
-    >
-      <div className="w-24 h-24 rounded-full bg-gradient-to-br from-pink-400 to-violet-500 flex items-center justify-center shadow-2xl mx-auto mb-6">
-        <Sparkles className="w-12 h-12 text-white/90" />
-      </div>
-      <h1 className="text-3xl font-bold text-gray-800 mb-2">ニアとおはなし</h1>
-      <p className="text-gray-600 mb-8 max-w-sm mx-auto">
-        うれしいこと、なやみごと、なんでも話してね。
-      </p>
-      <div className="flex justify-center">
-        <motion.button
-          onClick={onUnlock}
-          className="relative z-10 bg-gradient-to-br from-emerald-400 via-green-500 to-teal-500 hover:from-emerald-500 hover:to-teal-600 text-white rounded-full px-8 py-4 text-lg font-semibold shadow-xl flex items-center gap-3 backdrop-blur-md transition-all duration-200"
-          style={{
-            background:
-              "linear-gradient(135deg, #34d399 0%, #22c55e 50%, #14b8a6 100%)",
-          }}
-          whileHover={{ scale: 1.07 }}
-          whileTap={{ scale: 0.96 }}
-        >
-          <Phone className="w-6 h-6 text-white drop-shadow" /> はじめる
-        </motion.button>
-      </div>
-    </motion.div>
-    <div className="absolute bottom-4 right-4 text-xs text-gray-500/80 font-mono select-none">
-      v{app_version}
-    </div>
-  </div>
-));
-UnlockScreen.displayName = "UnlockScreen";
-
-const SettingsDialog = memo(
-  ({
-    isOpen,
-    onClose,
-    thinkMode,
-    setThinkMode,
-  }: {
-    isOpen: boolean;
-    onClose: () => void;
-    thinkMode: "fast" | "slow";
-    setThinkMode: (mode: "fast" | "slow") => void;
-  }) => {
-    const handleModeChange = (mode: "fast" | "slow") => {
-      setThinkMode(mode);
-      onClose();
-    };
-
-    return (
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={onClose}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 10 }}
-              transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-              className="w-full max-w-sm bg-white/90 rounded-3xl shadow-2xl p-6 flex flex-col gap-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex justify-between items-center">
-                <h2 className="text-xl font-bold text-gray-800">
-                  考え方を変える
-                </h2>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onClose}
-                  className="rounded-full text-gray-500"
-                >
-                  <X size={24} />
-                </Button>
-              </div>
-              <p className="text-gray-600 text-sm">
-                ニアの考える速さを選べるよ。速いとお返事がすぐ来るけど、ちょっとだけ考えが浅くなるかも？
-              </p>
-
-              <div className="flex flex-col gap-4 mt-2">
-                {/* うさぎモード */}
-                <button
-                  onClick={() => handleModeChange("fast")}
-                  className={`flex items-center justify-between w-full p-4 rounded-xl border-2 transition-all duration-200 ${
-                    thinkMode === "fast"
-                      ? "border-pink-500 bg-pink-50 shadow-md"
-                      : "border-gray-200 bg-white hover:border-pink-300"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div
-                      className={`p-2 rounded-full ${
-                        thinkMode === "fast"
-                          ? "bg-pink-500 text-white"
-                          : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      <Rabbit size={24} />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-left text-gray-800">
-                        うさぎモード
-                      </h3>
-                      <p className="text-sm text-left text-gray-500">
-                        はやく考える
-                      </p>
-                    </div>
-                  </div>
-                  {thinkMode === "fast" && (
-                    <motion.div
-                      layoutId="active-indicator"
-                      className="w-3 h-3 rounded-full bg-pink-500"
-                    />
-                  )}
-                </button>
-
-                {/* かめモード */}
-                <button
-                  onClick={() => handleModeChange("slow")}
-                  className={`flex items-center justify-between w-full p-4 rounded-xl border-2 transition-all duration-200 ${
-                    thinkMode === "slow"
-                      ? "border-violet-500 bg-violet-50 shadow-md"
-                      : "border-gray-200 bg-white hover:border-violet-300"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div
-                      className={`p-2 rounded-full ${
-                        thinkMode === "slow"
-                          ? "bg-violet-500 text-white"
-                          : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      <Turtle size={24} />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-left text-gray-800">
-                        かめモード
-                      </h3>
-                      <p className="text-sm text-left text-gray-500">
-                        じっくり考える
-                      </p>
-                    </div>
-                  </div>
-                  {thinkMode === "slow" && (
-                    <motion.div
-                      layoutId="active-indicator"
-                      className="w-3 h-3 rounded-full bg-violet-500"
-                    />
-                  )}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    );
-  }
-);
-SettingsDialog.displayName = "SettingsDialog";
-
-const CHAT_HISTORY_KEY = "near-chat-history";
-const THINK_MODE_KEY = "near-think-mode";
-
+// 初期化関数
 const createInitialMessage = (): Message => {
   const randomIndex = Math.floor(Math.random() * initialMessages.length);
   const selectedMessage = initialMessages[randomIndex];
@@ -1217,7 +90,6 @@ const createInitialMessage = (): Message => {
     audioUrl: selectedMessage.audioUrl,
   };
 };
-
 const createGoodbyeMessage = (): Message => {
   const randomIndex = Math.floor(Math.random() * goodbyeMessages.length);
   const selectedMessage = goodbyeMessages[randomIndex];
@@ -1230,46 +102,14 @@ const createGoodbyeMessage = (): Message => {
   };
 };
 
-// ★★★ このキーはlogin/page.tsxと必ず同じものを使う ★★★
-const CHILD_ID_STORAGE_KEY = "near-child-id";
-
-// ★ 新しく「ログイン前」の画面コンポーネントを追加
-const PreLoginScreen = () => {
-  const router = useRouter();
-  return (
-    <div className="absolute inset-0 bg-gradient-to-br from-sky-100 via-rose-100 to-violet-200 flex flex-col justify-center items-center z-50 p-4 text-center">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-        className="space-y-6"
-      >
-        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-pink-400 to-violet-500 flex items-center justify-center shadow-2xl mx-auto">
-          <Sparkles className="w-12 h-12 text-white/90" />
-        </div>
-        <h1 className="text-3xl font-bold text-gray-800">ニアとおはなし</h1>
-        <p className="text-gray-600 max-w-sm mx-auto">
-          はじめるには、先生からもらったQRコードを読み込んでね。
-        </p>
-        <motion.button
-          onClick={() => router.push("/login")}
-          className="bg-gradient-to-br from-emerald-400 via-green-500 to-teal-500 hover:from-emerald-500 hover:to-teal-600 text-white rounded-full px-8 py-4 text-lg font-semibold shadow-xl flex items-center gap-3"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-        >
-          <QrCode className="w-6 h-6" /> QRコードでログイン
-        </motion.button>
-      </motion.div>
-    </div>
-  );
-};
-
 export default function ChatPage() {
+  const [isClient, setIsClient] = useState(false);
+  const [childId, setChildId] = useState<string | null>(null);
+  const [isResetting, setIsResetting] = useState(false); // ★ 削除処理中ローディングstate
+
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isNewSession, setIsNewSession] = useState(true);
-  const [messages, setMessages] = useState<Message[]>(() => [
-    createInitialMessage(),
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1289,44 +129,55 @@ export default function ChatPage() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
-  const [childId, setChildId] = useState<string | null>(null); // ★ 子供IDを管理するstateを追加
-
-  // ★ ページ読み込み時にログイン状態をチェックするuseEffectを追加
   useEffect(() => {
+    setIsClient(true);
     try {
       const storedChildId = localStorage.getItem(CHILD_ID_STORAGE_KEY);
-      if (storedChildId) {
-        console.log("Logged in child found:", storedChildId);
-        setChildId(storedChildId);
-      } else {
-        console.log("No logged in child found.");
-      }
-    } catch (error) {
-      console.error("Could not access localStorage:", error);
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      const savedHistory = localStorage.getItem(CHAT_HISTORY_KEY);
-      if (savedHistory) {
-        const parsed = JSON.parse(savedHistory);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setMessages(parsed);
-          setIsNewSession(false);
-        }
-      }
-
+      setChildId(storedChildId);
       const savedMode = localStorage.getItem(THINK_MODE_KEY);
       if (savedMode === "fast" || savedMode === "slow") {
         setThinkMode(savedMode);
       }
     } catch (e) {
-      console.error("Failed to load settings from localStorage:", e);
-      localStorage.removeItem(CHAT_HISTORY_KEY);
-      localStorage.removeItem(THINK_MODE_KEY);
+      console.error("Failed to access localStorage:", e);
     }
   }, []);
+
+  useEffect(() => {
+    if (childId) {
+      const fetchHistory = async () => {
+        try {
+          const res = await fetch(`/api/conversations?childId=${childId}`, {
+            cache: "no-store",
+          });
+          if (!res.ok) throw new Error("Failed to fetch history");
+          const history: {
+            content: string;
+            role: "user" | "ai";
+            emotion?: Emotion;
+          }[] = await res.json();
+          if (history.length > 0) {
+            setMessages(
+              history.map((msg, index) => ({
+                id: Date.now() + index,
+                role: msg.role,
+                text: msg.content,
+                emotion: msg.emotion,
+              }))
+            );
+            setIsNewSession(false);
+          } else {
+            setMessages([createInitialMessage()]);
+            setIsNewSession(true);
+          }
+        } catch (error) {
+          console.error("Failed to fetch history, starting fresh.", error);
+          setMessages([createInitialMessage()]);
+        }
+      };
+      fetchHistory();
+    }
+  }, [childId]);
 
   const handleSetThinkMode = (mode: "fast" | "slow") => {
     setThinkMode(mode);
@@ -1344,12 +195,10 @@ export default function ChatPage() {
       onEnd?.();
       return;
     }
-
     if (audioSourceRef.current) {
       audioSourceRef.current.onended = null;
       audioSourceRef.current.stop();
     }
-
     const playDecodedBuffer = (buffer: ArrayBuffer) => {
       context
         .decodeAudioData(buffer)
@@ -1373,38 +222,31 @@ export default function ChatPage() {
         });
     };
 
-    if (audioSrc.startsWith("/") || audioSrc.startsWith("http")) {
+    if (
+      audioSrc.startsWith("data:audio/wav;base64,") ||
+      audioSrc.startsWith("/")
+    ) {
       fetch(audioSrc)
-        .then((response) => {
-          if (!response.ok) throw new Error("Audio file not found");
-          return response.arrayBuffer();
-        })
+        .then((res) => res.arrayBuffer())
         .then(playDecodedBuffer)
         .catch((e) => {
           console.error("Error fetching audio:", e);
           setIsSpeaking(false);
           onEnd?.();
         });
-      // Base64文字列をより安全なData URLスキームで再生する方式に変更
+    } else {
       try {
         const audioUrl = `data:audio/wav;base64,${audioSrc}`;
         fetch(audioUrl)
-          .then((response) => {
-            if (!response.ok) {
-              throw new Error(
-                `Failed to fetch audio data URL: ${response.statusText}`
-              );
-            }
-            return response.arrayBuffer();
-          })
+          .then((res) => res.arrayBuffer())
           .then(playDecodedBuffer)
           .catch((e) => {
-            console.error("Error fetching or decoding base64 audio:", e);
+            console.error("Error fetching or decoding raw base64 audio:", e);
             setIsSpeaking(false);
             onEnd?.();
           });
       } catch (e) {
-        console.error("Error creating audio data URL:", e);
+        console.error("Error creating audio data URL from raw base64:", e);
         setIsSpeaking(false);
         onEnd?.();
       }
@@ -1417,7 +259,6 @@ export default function ChatPage() {
         const w = window as CustomWindow;
         const AudioContextClass = w.AudioContext || w.webkitAudioContext;
         if (!AudioContextClass) {
-          console.error("AudioContext is not supported in this browser.");
           alert("お使いのブラウザは音声機能に対応していません。");
           return;
         }
@@ -1431,44 +272,38 @@ export default function ChatPage() {
         console.error("Failed to initialize AudioContext:", e);
       }
     }
-
     try {
       if (
         audioContextRef.current &&
         audioContextRef.current.state === "suspended"
       ) {
         await audioContextRef.current.resume();
-        console.log("AudioContext resumed successfully.");
       }
     } catch (e) {
       console.error("Failed to resume AudioContext:", e);
     }
-
     setIsUnlocked(true);
   };
 
   useEffect(() => {
-    if (isUnlocked && isNewSession && !isSpeaking) {
+    if (isUnlocked && isNewSession && !isSpeaking && messages.length > 0) {
       const firstMessage = messages[0];
-      if (firstMessage?.audioUrl) {
+      if (firstMessage.role === "ai" && firstMessage.audioUrl) {
         setBaseEmotion(firstMessage.emotion || "happy");
         setLiveMessage(firstMessage);
-
         playAudio(firstMessage.audioUrl, () => {
           setTimeout(() => {
             setBaseEmotion("neutral");
             setLiveMessage(null);
           }, 1000);
         });
-
         setIsNewSession(false);
       }
     }
   }, [isUnlocked, isNewSession, isSpeaking, messages, playAudio]);
 
   const handleSendMessage = async (input: string) => {
-    if (isLoading) return;
-
+    if (isLoading || !childId) return;
     if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
     setInteractionEmotion(null);
     if (audioSourceRef.current) {
@@ -1477,29 +312,23 @@ export default function ChatPage() {
     }
     setLiveMessage(null);
     setIsSpeaking(false);
-
     setIsLoading(true);
     setBaseEmotion("thinking");
-
     const userMessage: Message = { id: Date.now(), role: "user", text: input };
-    const newHistory = [...messages, userMessage];
-    setMessages(newHistory);
-
+    setMessages((prev) => [...prev, userMessage]);
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: input,
-          history: messages,
+          childId: childId,
           mode: thinkMode,
         }),
       });
       const data = await response.json();
-      if (!response.ok || data.error) {
+      if (!response.ok || data.error)
         throw new Error(data.error?.message || "APIエラーが発生しました。");
-      }
-
       const aiMessage: Message = {
         id: Date.now() + 1,
         role: "ai",
@@ -1507,10 +336,8 @@ export default function ChatPage() {
         emotion: data.emotion,
         audioData: data.audioData,
       };
-
       setMessages((prev) => [...prev, aiMessage]);
       setLiveMessage(aiMessage);
-
       setBaseEmotion((data.emotion as Emotion) || "happy");
       if (data.audioData) {
         playAudio(data.audioData, () => {
@@ -1520,12 +347,6 @@ export default function ChatPage() {
           }, 1000);
         });
       }
-
-      const finalHistory = [
-        ...newHistory,
-        { ...aiMessage, audioData: undefined, audioUrl: undefined },
-      ];
-      localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(finalHistory));
     } catch (error) {
       console.error("メッセージ処理エラー:", error);
       const errorMsg: Message = {
@@ -1551,11 +372,8 @@ export default function ChatPage() {
       ...prev,
       { id: Date.now(), position: event.point.clone() },
     ]);
-
     if (isSpeaking) return;
-    if (interactionTimerRef.current) {
-      clearTimeout(interactionTimerRef.current);
-    }
+    if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
     setInteractionEmotion("happy");
     interactionTimerRef.current = setTimeout(() => {
       setInteractionEmotion(null);
@@ -1567,20 +385,49 @@ export default function ChatPage() {
     setEffects((prev) => prev.filter((effect) => effect.id !== id));
   };
 
-  const handleReset = () => {
-    if (audioSourceRef.current) audioSourceRef.current.stop();
-    setIsSpeaking(false);
-    setMessages([createInitialMessage()]);
-    localStorage.removeItem(CHAT_HISTORY_KEY);
-    setBaseEmotion("neutral");
-    setIsHistoryOpen(false);
-    setLiveMessage(null);
-    setIsNewSession(true);
+  const handleReset = async () => {
+    // 削除処理中、またはログインIDがなければ何もしない
+    if (isResetting || !childId) return;
+
+    // 確認ダイアログを表示
+    const isConfirmed = window.confirm(
+      "ほんとうに、今までのニアとのおはなしを全部わすれちゃうけど、だいじょうぶ？"
+    );
+    if (!isConfirmed) {
+      return;
+    }
+
+    setIsResetting(true);
+
+    try {
+      const response = await fetch(`/api/conversations?childId=${childId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("履歴のリセットに失敗しました。");
+      }
+
+      // DB削除が成功したら、フロントエンドの状態もリセット
+      if (audioSourceRef.current) audioSourceRef.current.stop();
+      setIsSpeaking(false);
+      setMessages([createInitialMessage()]);
+      setBaseEmotion("neutral");
+      setIsHistoryOpen(false); // 履歴画面を閉じる
+      setLiveMessage(null);
+      setIsNewSession(true);
+    } catch (error) {
+      console.error("Reset failed:", error);
+      alert(
+        "ごめんなさい、おはなしの記憶を消すのに失敗しちゃった…。もう一度試してみてね。"
+      );
+    } finally {
+      setIsResetting(false);
+    }
   };
 
   const handleEndCall = () => {
     if (isLoading) return;
-
     if (audioSourceRef.current) {
       audioSourceRef.current.onended = null;
       audioSourceRef.current.stop();
@@ -1590,55 +437,44 @@ export default function ChatPage() {
     setIsLoading(false);
     setBaseEmotion("happy");
     setInteractionEmotion(null);
-
     const goodbyeMessage = createGoodbyeMessage();
     setLiveMessage(goodbyeMessage);
-
     if (goodbyeMessage.audioUrl) {
       playAudio(goodbyeMessage.audioUrl, () => {
         setTimeout(() => {
           setIsUnlocked(false);
-          handleReset();
         }, 500);
       });
+    } else {
+      setTimeout(() => {
+        setIsUnlocked(false);
+      }, 1000);
     }
   };
 
-  // 1. childIdがまだ確定していない（チェック中）場合は何も表示しない
-  if (
-    childId === null &&
-    typeof window !== "undefined" &&
-    !localStorage.getItem(CHILD_ID_STORAGE_KEY)
-  ) {
-    // 初回アクセス時など、IDが存在しないことが確定している場合
+  if (!isClient) {
+    return (
+      <div className="w-full h-screen flex justify-center items-center bg-gradient-to-br from-sky-100 to-violet-200">
+        <p>読み込み中...</p>
+      </div>
+    );
+  }
+  if (!childId) {
     return (
       <main
-        className={`${cuteFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-gradient-to-br from-sky-100 to-violet-200`}
+        className={`${cuteFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col`}
       >
         <PreLoginScreen />
       </main>
     );
   }
-
-  // 2. childIdが確定したが、存在しない場合
-  if (!childId) {
-    // この状態は、上記の初回アクセスチェックで吸収されるが、念のためローディング表示
-    return (
-      <div className="w-full h-screen flex justify-center items-center">
-        <p>読み込み中...</p>
-      </div>
-    );
-  }
-
   return (
     <main
       className={`${cuteFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-gradient-to-br from-sky-100 to-violet-200`}
     >
-      {/* isUnlockedのロジックはそのまま活かす */}
       <AnimatePresence>
         {!isUnlocked && <UnlockScreen onUnlock={handleUnlock} />}
       </AnimatePresence>
-
       {isUnlocked && (
         <div className="w-full h-full flex flex-col z-10">
           <header
@@ -1646,7 +482,6 @@ export default function ChatPage() {
           >
             <h1 className="text-xl font-bold text-gray-800">ニアとおはなし</h1>
           </header>
-
           <div className="flex-1 w-full relative min-h-0">
             <div className="absolute inset-0 z-0">
               <VRMCanvas
@@ -1656,9 +491,9 @@ export default function ChatPage() {
                 onHeadClick={handleHeadClick}
                 effects={effects}
                 onEffectComplete={handleEffectComplete}
+                isLoading={isLoading}
               />
             </div>
-
             <div className="absolute inset-0 flex flex-col justify-end pointer-events-none">
               <AnimatePresence>
                 {liveMessage && liveMessage.role === "ai" && (
@@ -1666,12 +501,8 @@ export default function ChatPage() {
                 )}
               </AnimatePresence>
             </div>
-
-            <AnimatePresence>
-              {isLoading && <ThinkingIndicator />}
-            </AnimatePresence>
+            <AnimatePresence>{isLoading && <ThinkingUI />}</AnimatePresence>
           </div>
-
           <ControlBarFooter
             onSendMessage={handleSendMessage}
             isLoading={isLoading}
@@ -1679,18 +510,16 @@ export default function ChatPage() {
             onEndCallClick={handleEndCall}
             onSettingsClick={() => setIsSettingsOpen(true)}
           />
-
           <AnimatePresence>
             {isHistoryOpen && (
               <ChatHistoryOverlay
                 messages={messages}
-                isLoading={isLoading}
+                isLoading={isLoading || isResetting} // ★ isResettingも考慮
                 onClose={() => setIsHistoryOpen(false)}
                 onReset={handleReset}
               />
             )}
           </AnimatePresence>
-
           <SettingsDialog
             isOpen={isSettingsOpen}
             onClose={() => setIsSettingsOpen(false)}
