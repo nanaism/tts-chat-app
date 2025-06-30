@@ -17,10 +17,13 @@ import {
   Loader,
   Phone,
   PhoneOff,
+  Rabbit,
   Send,
+  Settings,
   Sparkles,
   Star,
   Trash,
+  Turtle,
   X,
 } from "lucide-react";
 import { Kiwi_Maru } from "next/font/google";
@@ -917,11 +920,13 @@ const ControlBarFooter = memo(
     onSendMessage,
     onHistoryClick,
     onEndCallClick,
+    onSettingsClick,
     isLoading,
   }: {
     onSendMessage: (input: string) => void;
     onHistoryClick: () => void;
     onEndCallClick: () => void;
+    onSettingsClick: () => void;
     isLoading: boolean;
   }) => {
     const [input, setInput] = useState("");
@@ -940,17 +945,29 @@ const ControlBarFooter = memo(
     };
     return (
       <footer className="p-3 bg-white/40 backdrop-blur-lg border-t flex-shrink-0 z-10">
-        <div className="flex w-full items-center space-x-3">
+        <div className="flex w-full items-center space-x-2">
           <motion.div whileTap={{ scale: 0.9 }}>
             <Button
               variant="ghost"
               size="icon"
               onClick={onHistoryClick}
               disabled={isLoading}
-              className="rounded-full text-gray-600 w-6 h-6"
+              className="rounded-full text-gray-600 w-8 h-8"
               aria-label="履歴を表示"
             >
-              <History size={26} />
+              <History size={24} />
+            </Button>
+          </motion.div>
+          <motion.div whileTap={{ scale: 0.9 }}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onSettingsClick}
+              disabled={isLoading}
+              className="rounded-full text-gray-600 w-8 h-8"
+              aria-label="設定"
+            >
+              <Settings size={22} />
             </Button>
           </motion.div>
 
@@ -1044,7 +1061,143 @@ const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
 ));
 UnlockScreen.displayName = "UnlockScreen";
 
+const SettingsDialog = memo(
+  ({
+    isOpen,
+    onClose,
+    thinkMode,
+    setThinkMode,
+  }: {
+    isOpen: boolean;
+    onClose: () => void;
+    thinkMode: "fast" | "slow";
+    setThinkMode: (mode: "fast" | "slow") => void;
+  }) => {
+    const handleModeChange = (mode: "fast" | "slow") => {
+      setThinkMode(mode);
+      onClose();
+    };
+
+    return (
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={onClose}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+              className="w-full max-w-sm bg-white/90 rounded-3xl shadow-2xl p-6 flex flex-col gap-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl font-bold text-gray-800">
+                  考え方を変える
+                </h2>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onClose}
+                  className="rounded-full text-gray-500"
+                >
+                  <X size={24} />
+                </Button>
+              </div>
+              <p className="text-gray-600 text-sm">
+                ニアの考える速さを選べるよ。速いとお返事がすぐ来るけど、ちょっとだけ考えが浅くなるかも？
+              </p>
+
+              <div className="flex flex-col gap-4 mt-2">
+                {/* うさぎモード */}
+                <button
+                  onClick={() => handleModeChange("fast")}
+                  className={`flex items-center justify-between w-full p-4 rounded-xl border-2 transition-all duration-200 ${
+                    thinkMode === "fast"
+                      ? "border-pink-500 bg-pink-50 shadow-md"
+                      : "border-gray-200 bg-white hover:border-pink-300"
+                  }`}
+                >
+                  <div className="flex items-center gap-4">
+                    <div
+                      className={`p-2 rounded-full ${
+                        thinkMode === "fast"
+                          ? "bg-pink-500 text-white"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      <Rabbit size={24} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-left text-gray-800">
+                        うさぎモード
+                      </h3>
+                      <p className="text-sm text-left text-gray-500">
+                        はやく考える
+                      </p>
+                    </div>
+                  </div>
+                  {thinkMode === "fast" && (
+                    <motion.div
+                      layoutId="active-indicator"
+                      className="w-3 h-3 rounded-full bg-pink-500"
+                    />
+                  )}
+                </button>
+
+                {/* かめモード */}
+                <button
+                  onClick={() => handleModeChange("slow")}
+                  className={`flex items-center justify-between w-full p-4 rounded-xl border-2 transition-all duration-200 ${
+                    thinkMode === "slow"
+                      ? "border-violet-500 bg-violet-50 shadow-md"
+                      : "border-gray-200 bg-white hover:border-violet-300"
+                  }`}
+                >
+                  <div className="flex items-center gap-4">
+                    <div
+                      className={`p-2 rounded-full ${
+                        thinkMode === "slow"
+                          ? "bg-violet-500 text-white"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      <Turtle size={24} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-left text-gray-800">
+                        かめモード
+                      </h3>
+                      <p className="text-sm text-left text-gray-500">
+                        じっくり考える
+                      </p>
+                    </div>
+                  </div>
+                  {thinkMode === "slow" && (
+                    <motion.div
+                      layoutId="active-indicator"
+                      className="w-3 h-3 rounded-full bg-violet-500"
+                    />
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    );
+  }
+);
+SettingsDialog.displayName = "SettingsDialog";
+
 const CHAT_HISTORY_KEY = "near-chat-history";
+const THINK_MODE_KEY = "near-think-mode";
 
 const createInitialMessage = (): Message => {
   const randomIndex = Math.floor(Math.random() * initialMessages.length);
@@ -1078,6 +1231,8 @@ export default function ChatPage() {
   ]);
   const [isLoading, setIsLoading] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [thinkMode, setThinkMode] = useState<"fast" | "slow">("slow");
   const [liveMessage, setLiveMessage] = useState<Message | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [baseEmotion, setBaseEmotion] = useState<Emotion>("neutral");
@@ -1095,21 +1250,35 @@ export default function ChatPage() {
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(CHAT_HISTORY_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
+      const savedHistory = localStorage.getItem(CHAT_HISTORY_KEY);
+      if (savedHistory) {
+        const parsed = JSON.parse(savedHistory);
         if (Array.isArray(parsed) && parsed.length > 0) {
           setMessages(parsed);
           setIsNewSession(false);
         }
       }
+
+      const savedMode = localStorage.getItem(THINK_MODE_KEY);
+      if (savedMode === "fast" || savedMode === "slow") {
+        setThinkMode(savedMode);
+      }
     } catch (e) {
-      console.error("Failed to load chat history:", e);
+      console.error("Failed to load settings from localStorage:", e);
       localStorage.removeItem(CHAT_HISTORY_KEY);
+      localStorage.removeItem(THINK_MODE_KEY);
     }
   }, []);
 
-  // ★修正点1: playAudio を useCallback でメモ化
+  const handleSetThinkMode = (mode: "fast" | "slow") => {
+    setThinkMode(mode);
+    try {
+      localStorage.setItem(THINK_MODE_KEY, mode);
+    } catch (e) {
+      console.error("Failed to save think mode to localStorage:", e);
+    }
+  };
+
   const playAudio = useCallback((audioSrc: string, onEnd?: () => void) => {
     const analyser = analyserRef.current;
     const context = audioContextRef.current;
@@ -1173,7 +1342,6 @@ export default function ChatPage() {
     }
   }, []);
 
-  // ★修正点2: handleUnlockをasyncに変更し、責務をシンプルにする
   const handleUnlock = async () => {
     if (!audioContextRef.current) {
       try {
@@ -1210,7 +1378,6 @@ export default function ChatPage() {
     setIsUnlocked(true);
   };
 
-  // ★修正点3: 初回挨拶を再生するためのuseEffectを追加
   useEffect(() => {
     if (isUnlocked && isNewSession && !isSpeaking) {
       const firstMessage = messages[0];
@@ -1253,7 +1420,11 @@ export default function ChatPage() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: input, history: messages }),
+        body: JSON.stringify({
+          message: input,
+          history: messages,
+          mode: thinkMode,
+        }),
       });
       const data = await response.json();
       if (!response.ok || data.error) {
@@ -1410,6 +1581,7 @@ export default function ChatPage() {
             isLoading={isLoading}
             onHistoryClick={() => setIsHistoryOpen(true)}
             onEndCallClick={handleEndCall}
+            onSettingsClick={() => setIsSettingsOpen(true)}
           />
 
           <AnimatePresence>
@@ -1422,6 +1594,13 @@ export default function ChatPage() {
               />
             )}
           </AnimatePresence>
+
+          <SettingsDialog
+            isOpen={isSettingsOpen}
+            onClose={() => setIsSettingsOpen(false)}
+            thinkMode={thinkMode}
+            setThinkMode={handleSetThinkMode}
+          />
         </div>
       )}
     </main>
