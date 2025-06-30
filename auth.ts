@@ -33,38 +33,24 @@ export const {
       );
 
       try {
-        // ★★★ ここが最重要修正点 ★★★
-        // SupabaseのRPC（Remote Procedure Call）を使って、
-        // Supabaseが内部的に管理するauthスキーマのusersテーブルにデータを書き込む
-        const { error } = await supabaseAdmin.from("users").upsert(
+        // "users"ではなく"profiles"テーブルを操作する
+        const { error } = await supabaseAdmin.from("profiles").upsert(
           {
-            id: user.id, // Googleから来たID (stringだがuuid形式)
-            raw_user_meta_data: {
-              // auth.usersテーブルの構造に合わせる
-              name: user.name,
-              avatar_url: user.image,
-            },
-            raw_app_meta_data: {
-              provider: "google",
-            },
+            id: user.id, // GoogleのIDをSupabaseのauth.users.idとして使う
+            name: user.name,
             email: user.email,
+            avatar_url: user.image,
+            updated_at: new Date().toISOString(),
           },
-          { onConflict: "id" }
+          { onConflict: "id" } // 主キー(id)が競合した場合は更新
         );
 
         if (error) {
-          // 2回目以降のログインでは、emailのunique制約でエラーが出ることがあるが、
-          // onConflictでidが一致すれば更新されるので、基本的には問題ないはず。
-          // それ以外の予期せぬエラーの場合のみサインインを止める。
-          console.error("Supabase upsert in signIn failed:", error);
-          // 万が一に備え、email重複エラー(23505)は許容する
-          if (error.code !== "23505") {
-            return false;
-          }
+          console.error("Supabase upsert failed in signIn:", error);
+          return false; // エラーがあればサインインを中止
         }
 
-        console.log("User successfully upserted into auth.users.");
-        return true; // サインインを許可
+        return true; // 成功したらサインインを許可
       } catch (err) {
         console.error("Unexpected error during signIn upsert:", err);
         return false;
