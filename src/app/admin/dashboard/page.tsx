@@ -1,7 +1,7 @@
 import { ChildrenDashboard } from "@/components/features/admin/ChildrenDashboard"; // 新しいコンポーネント
 import { createClient } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
-import { auth } from "../../../../auth";
+import { auth } from "@/auth";
 
 // サーバーサイドでのみ使用するSupabaseクライアント
 const supabaseAdmin = createClient(

@@ -1,5 +1,5 @@
+import { auth, signIn, signOut } from "@/auth";
 import { Button } from "@/components/ui/button"; // shadcn/uiのButtonを再利用
-import { auth, signIn, signOut } from "../../auth";
 
 export async function SignIn() {
   return (
