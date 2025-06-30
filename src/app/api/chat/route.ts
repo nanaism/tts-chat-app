@@ -18,63 +18,77 @@ export async function POST(req: NextRequest) {
       message,
       mode,
       childId,
+      history,
     }: {
       message: string;
       mode: "fast" | "slow";
-      childId: string;
+      childId: string | null;
+      history: { role: "user" | "ai"; text: string }[] | null;
     } = await req.json();
 
-    if (!message || !childId) {
+    if (!message) {
       return NextResponse.json(
-        { error: "メッセージと子供IDは必須です。" },
+        { error: "メッセージは必須です。" },
         { status: 400 }
       );
     }
 
-    // 会話の総数を取得
-    const { count, error: countError } = await supabaseAdmin
-      .from("conversations")
-      .select("*", { count: "exact", head: true })
-      .eq("child_id", childId);
+    let summary: string | null = null;
+    let conversationHistory: HistoryMessage[] = [];
 
-    if (countError) throw countError;
+    if (childId) {
+      // --- 通常モード (childIdがある) ---
+      console.log(`Normal mode for child: ${childId}`);
 
-    // 会話の往復が18回 (36メッセージ) ごとに要約を実行
-    if ((count ?? 0) > 0 && (count ?? 0) % 36 === 0) {
-      summarizeConversation(childId);
-      console.log(
-        `Conversation count is ${count}, triggering summarization for child ${childId}`
-      );
-    }
-
-    // 長期記憶(サマリー)と短期記憶(会話履歴)を並行して取得
-    const [summaryResult, historyResult] = await Promise.all([
-      supabaseAdmin
-        .from("child_summaries")
-        .select("summary")
-        .eq("child_id", childId)
-        .single(),
-      supabaseAdmin
+      const { count, error: countError } = await supabaseAdmin
         .from("conversations")
-        .select("role, content")
-        .eq("child_id", childId)
-        .order("created_at", { ascending: false })
-        .limit(10),
-    ]);
+        .select("*", { count: "exact", head: true })
+        .eq("child_id", childId);
 
-    if (historyResult.error) throw historyResult.error;
+      if (countError)
+        console.error("Failed to get conversation count:", countError);
 
-    const summary = summaryResult.data?.summary ?? null;
-    const formattedHistory: HistoryMessage[] = (historyResult.data || [])
-      .reverse()
-      .map((msg) => ({
+      if ((count ?? 0) > 0 && (count ?? 0) % 36 === 0) {
+        summarizeConversation(childId);
+        console.log(
+          `Conversation count is ${count}, triggering summarization for child ${childId}`
+        );
+      }
+
+      const [summaryResult, historyResult] = await Promise.all([
+        supabaseAdmin
+          .from("child_summaries")
+          .select("summary")
+          .eq("child_id", childId)
+          .single(),
+        supabaseAdmin
+          .from("conversations")
+          .select("role, content")
+          .eq("child_id", childId)
+          .order("created_at", { ascending: false })
+          .limit(10),
+      ]);
+
+      if (historyResult.error)
+        console.error("History fetch error:", historyResult.error);
+
+      summary = summaryResult.data?.summary ?? null;
+      conversationHistory = (historyResult.data || []).reverse().map((msg) => ({
         role: msg.role === "ai" ? "model" : "user",
         parts: [{ text: msg.content }],
       }));
+    } else if (history) {
+      // --- デモモード (childIdがなく、historyがある) ---
+      console.log("Demo mode activated.");
+      conversationHistory = history.map((msg) => ({
+        role: msg.role === "ai" ? "model" : "user",
+        parts: [{ text: msg.text }],
+      }));
+    }
 
     const aiPrompt = createAiPrompt(summary);
     const contents = [
-      ...formattedHistory,
+      ...conversationHistory,
       { role: "user", parts: [{ text: aiPrompt + "\n\n" + message }] },
     ];
 
@@ -122,21 +136,23 @@ export async function POST(req: NextRequest) {
       throw new Error("AIからの応答形式が正しくありません。");
     }
 
-    Promise.all([
-      supabaseAdmin
-        .from("conversations")
-        .insert({ child_id: childId, role: "user", content: message }),
-      supabaseAdmin
-        .from("conversations")
-        .insert({
-          child_id: childId,
-          role: "ai",
-          content: responseText,
-          emotion: emotion,
-        }),
-    ]).catch((dbError) =>
-      console.error("DB insert failed but continuing:", dbError)
-    );
+    if (childId) {
+      Promise.all([
+        supabaseAdmin
+          .from("conversations")
+          .insert({ child_id: childId, role: "user", content: message }),
+        supabaseAdmin
+          .from("conversations")
+          .insert({
+            child_id: childId,
+            role: "ai",
+            content: responseText,
+            emotion: emotion,
+          }),
+      ]).catch((dbError) =>
+        console.error("DB insert failed but continuing:", dbError)
+      );
+    }
 
     const ttsResponse = await genAI.models.generateContent({
       model: ttsModel,

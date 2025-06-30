@@ -4,7 +4,11 @@ import { motion } from "framer-motion";
 import { QrCode, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-export const PreLoginScreen = () => {
+type Props = {
+  onDemoStart: () => void;
+};
+
+export const PreLoginScreen = ({ onDemoStart }: Props) => {
   const router = useRouter();
   return (
     <div className="absolute inset-0 bg-gradient-to-br from-sky-100 via-rose-100 to-violet-200 flex flex-col justify-center items-center z-50 p-4 text-center">
@@ -19,16 +23,28 @@ export const PreLoginScreen = () => {
         </div>
         <h1 className="text-3xl font-bold text-gray-800">ニアとおはなし</h1>
         <p className="text-gray-600 max-w-sm mx-auto">
-          はじめるには、先生からもらったQRコードを読み込んでね。
+          はじめるには、QRコードを読み込んでね！
         </p>
-        <motion.button
-          onClick={() => router.push("/login")}
-          className="bg-gradient-to-br from-emerald-400 via-green-500 to-teal-500 hover:from-emerald-500 hover:to-teal-600 text-white rounded-full px-8 py-4 text-lg font-semibold shadow-xl flex items-center gap-3"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-        >
-          <QrCode className="w-6 h-6" /> QRコードでログイン
-        </motion.button>
+
+        <div className="flex flex-col sm:flex-row gap-4">
+          <motion.button
+            onClick={() => router.push("/login")}
+            className="bg-gradient-to-br from-emerald-400 via-green-500 to-teal-500 hover:from-emerald-500 hover:to-teal-600 text-white rounded-full px-8 py-4 text-lg font-semibold shadow-xl flex items-center gap-3"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <QrCode className="w-6 h-6" /> QRコードでログイン
+          </motion.button>
+
+          <motion.button
+            onClick={onDemoStart}
+            className="bg-gradient-to-br from-purple-400 via-pink-500 to-red-500 hover:from-purple-500 hover:to-red-600 text-white rounded-full px-8 py-4 text-lg font-semibold shadow-xl flex items-center gap-3"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <Sparkles className="w-6 h-6" /> デモをはじめる
+          </motion.button>
+        </div>
       </motion.div>
     </div>
   );

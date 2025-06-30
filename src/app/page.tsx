@@ -5,6 +5,7 @@ import type { ThreeEvent } from "@react-three/fiber";
 import { AnimatePresence } from "framer-motion";
 import { Kiwi_Maru } from "next/font/google";
 import { useCallback, useEffect, useRef, useState } from "react";
+import * as THREE from "three";
 
 // 分割したコンポーネントをインポート
 import { ControlBarFooter } from "@/components/features/chat/controllers/ControlBarFooter";
@@ -13,9 +14,8 @@ import { SettingsDialog } from "@/components/features/chat/controllers/SettingsD
 import { UnlockScreen } from "@/components/features/chat/controllers/UnlockScreen";
 import { ChatHistoryOverlay } from "@/components/features/chat/ui/ChatHistoryOverlay";
 import { LiveMessageBubble } from "@/components/features/chat/ui/LiveMessageBubble";
-import { ThinkingUI } from "@/components/features/chat/ui/ThinkingUI"; // ★ ThinkingUIをインポート
+import { ThinkingUI } from "@/components/features/chat/ui/ThinkingUI";
 import { VRMCanvas } from "@/components/features/chat/vrm/VRMCanvas";
-import * as THREE from "three"; // ★ THREEをインポート
 
 // 型定義
 type Message = {
@@ -105,7 +105,7 @@ const createGoodbyeMessage = (): Message => {
 export default function ChatPage() {
   const [isClient, setIsClient] = useState(false);
   const [childId, setChildId] = useState<string | null>(null);
-  const [isResetting, setIsResetting] = useState(false); // ★ 削除処理中ローディングstate
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isNewSession, setIsNewSession] = useState(true);
@@ -136,7 +136,7 @@ export default function ChatPage() {
       setChildId(storedChildId);
       const savedMode = localStorage.getItem(THINK_MODE_KEY);
       if (savedMode === "fast" || savedMode === "slow") {
-        setThinkMode(savedMode);
+        setThinkMode(savedMode as "fast" | "slow");
       }
     } catch (e) {
       console.error("Failed to access localStorage:", e);
@@ -145,6 +145,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (childId) {
+      setIsDemoMode(false); // ログインしたらデモモードは解除
       const fetchHistory = async () => {
         try {
           const res = await fetch(`/api/conversations?childId=${childId}`, {
@@ -179,8 +180,15 @@ export default function ChatPage() {
     }
   }, [childId]);
 
+  const handleDemoStart = () => {
+    setChildId(null); // ログインIDはクリア
+    setIsDemoMode(true);
+    setMessages([createInitialMessage()]);
+  };
+
   const handleSetThinkMode = (mode: "fast" | "slow") => {
     setThinkMode(mode);
+    if (isDemoMode) return;
     try {
       localStorage.setItem(THINK_MODE_KEY, mode);
     } catch (e) {
@@ -303,7 +311,8 @@ export default function ChatPage() {
   }, [isUnlocked, isNewSession, isSpeaking, messages, playAudio]);
 
   const handleSendMessage = async (input: string) => {
-    if (isLoading || !childId) return;
+    if (isLoading || (!childId && !isDemoMode)) return;
+
     if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
     setInteractionEmotion(null);
     if (audioSourceRef.current) {
@@ -314,21 +323,36 @@ export default function ChatPage() {
     setIsSpeaking(false);
     setIsLoading(true);
     setBaseEmotion("thinking");
+
     const userMessage: Message = { id: Date.now(), role: "user", text: input };
+    const currentHistory = messages;
+
+    // ★★★ ここが最重要修正点 ★★★
+    // デモモードでも通常モードでも、会話履歴を正しく積み重ねる
     setMessages((prev) => [...prev, userMessage]);
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: input,
-          childId: childId,
+          childId: isDemoMode ? null : childId,
+          // APIに送る履歴は、常に現在のメッセージリストから生成する
+          history: isDemoMode
+            ? currentHistory
+                .map((m) => ({ role: m.role, text: m.text }))
+                .slice(-10)
+            : null,
           mode: thinkMode,
         }),
       });
+      // ★★★ ここまで ★★★
+
       const data = await response.json();
       if (!response.ok || data.error)
         throw new Error(data.error?.message || "APIエラーが発生しました。");
+
       const aiMessage: Message = {
         id: Date.now() + 1,
         role: "ai",
@@ -339,6 +363,7 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, aiMessage]);
       setLiveMessage(aiMessage);
       setBaseEmotion((data.emotion as Emotion) || "happy");
+
       if (data.audioData) {
         playAudio(data.audioData, () => {
           setTimeout(() => {
@@ -386,34 +411,23 @@ export default function ChatPage() {
   };
 
   const handleReset = async () => {
-    // 削除処理中、またはログインIDがなければ何もしない
-    if (isResetting || !childId) return;
-
-    // 確認ダイアログを表示
+    if (isLoading || isDemoMode || !childId) return;
     const isConfirmed = window.confirm(
       "ほんとうに、今までのニアとのおはなしを全部わすれちゃうけど、だいじょうぶ？"
     );
-    if (!isConfirmed) {
-      return;
-    }
+    if (!isConfirmed) return;
 
-    setIsResetting(true);
-
+    setIsLoading(true);
     try {
       const response = await fetch(`/api/conversations?childId=${childId}`, {
         method: "DELETE",
       });
-
-      if (!response.ok) {
-        throw new Error("履歴のリセットに失敗しました。");
-      }
-
-      // DB削除が成功したら、フロントエンドの状態もリセット
+      if (!response.ok) throw new Error("履歴のリセットに失敗しました。");
       if (audioSourceRef.current) audioSourceRef.current.stop();
       setIsSpeaking(false);
       setMessages([createInitialMessage()]);
       setBaseEmotion("neutral");
-      setIsHistoryOpen(false); // 履歴画面を閉じる
+      setIsHistoryOpen(false);
       setLiveMessage(null);
       setIsNewSession(true);
     } catch (error) {
@@ -422,7 +436,7 @@ export default function ChatPage() {
         "ごめんなさい、おはなしの記憶を消すのに失敗しちゃった…。もう一度試してみてね。"
       );
     } finally {
-      setIsResetting(false);
+      setIsLoading(false);
     }
   };
 
@@ -439,16 +453,20 @@ export default function ChatPage() {
     setInteractionEmotion(null);
     const goodbyeMessage = createGoodbyeMessage();
     setLiveMessage(goodbyeMessage);
+
+    const onEnd = () => {
+      setIsUnlocked(false);
+      // デモモードの場合は、状態をリセットして最初の画面に戻る
+      if (isDemoMode) {
+        setIsDemoMode(false);
+        setMessages([]);
+      }
+    };
+
     if (goodbyeMessage.audioUrl) {
-      playAudio(goodbyeMessage.audioUrl, () => {
-        setTimeout(() => {
-          setIsUnlocked(false);
-        }, 500);
-      });
+      playAudio(goodbyeMessage.audioUrl, () => setTimeout(onEnd, 500));
     } else {
-      setTimeout(() => {
-        setIsUnlocked(false);
-      }, 1000);
+      setTimeout(onEnd, 1000);
     }
   };
 
@@ -459,15 +477,16 @@ export default function ChatPage() {
       </div>
     );
   }
-  if (!childId) {
+  if (!childId && !isDemoMode) {
     return (
       <main
         className={`${cuteFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col`}
       >
-        <PreLoginScreen />
+        <PreLoginScreen onDemoStart={handleDemoStart} />
       </main>
     );
   }
+
   return (
     <main
       className={`${cuteFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-gradient-to-br from-sky-100 to-violet-200`}
@@ -478,20 +497,20 @@ export default function ChatPage() {
       {isUnlocked && (
         <div className="w-full h-full flex flex-col z-10">
           <header
-            className={` w-full p-3 flex-shrink-0 bg-white/20 backdrop-blur-lg z-10 flex items-center justify-center border-b border-white/20`}
+            className={`w-full p-3 flex-shrink-0 bg-white/20 backdrop-blur-lg z-10 flex items-center justify-center border-b border-white/20`}
           >
             <h1 className="text-xl font-bold text-gray-800">ニアとおはなし</h1>
           </header>
           <div className="flex-1 w-full relative min-h-0">
             <div className="absolute inset-0 z-0">
               <VRMCanvas
+                isLoading={isLoading}
                 emotion={currentEmotion}
                 analyser={analyserRef.current}
                 isSpeaking={isSpeaking}
                 onHeadClick={handleHeadClick}
                 effects={effects}
                 onEffectComplete={handleEffectComplete}
-                isLoading={isLoading}
               />
             </div>
             <div className="absolute inset-0 flex flex-col justify-end pointer-events-none">
@@ -514,7 +533,7 @@ export default function ChatPage() {
             {isHistoryOpen && (
               <ChatHistoryOverlay
                 messages={messages}
-                isLoading={isLoading || isResetting} // ★ isResettingも考慮
+                isLoading={isLoading}
                 onClose={() => setIsHistoryOpen(false)}
                 onReset={handleReset}
               />

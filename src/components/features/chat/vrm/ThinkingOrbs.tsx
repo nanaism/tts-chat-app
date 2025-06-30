@@ -67,6 +67,7 @@ const Orb = ({
         onPointerOver={() => (document.body.style.cursor = "pointer")}
         onPointerOut={() => (document.body.style.cursor = "auto")}
         scale={isPopped ? 0 : scale}
+        renderOrder={1} // renderOrderをmeshに移動
       >
         <sphereGeometry args={[1, 32, 32]} />
         <meshStandardMaterial
@@ -78,6 +79,7 @@ const Orb = ({
           emissive={initialColor}
           emissiveIntensity={0.3}
           envMapIntensity={1}
+          depthWrite={false}
         />
       </mesh>
       {isPopped && <PopEffect color={initialColor} />}
@@ -88,12 +90,22 @@ const Orb = ({
 export const ThinkingOrbs = () => {
   const orbs = useMemo(() => {
     return Array.from({ length: ORB_COUNT }).map(() => {
-      const angle = Math.random() * Math.PI * 2;
+      // 角度を -45度(右後ろ) から +225度(左後ろ) の範囲に限定する
+      // これにより、キャラクターの正面135度の範囲には出現しなくなる
+      // 角度はラジアンで計算する (Math.PI は 180度)
+      const minAngle = -Math.PI / 4; // -45度
+      const maxAngle = Math.PI * 1.25; // 225度
+      const angle = minAngle + Math.random() * (maxAngle - minAngle);
+
+      // 半径はこれまで通り
       const radius = 0.5 + Math.random() * 0.5;
-      const x = Math.cos(angle) * radius;
-      const z = Math.sin(angle) * radius;
-      const y = 1.0 + (Math.random() - 0.5) * 0.8;
+
+      const x = Math.sin(angle) * radius; // xとzをsin/cosで計算
+      const z = Math.cos(angle) * radius;
+      const y = 1.0 + (Math.random() - 0.5) * 0.8; // 高さはこれまで通り
+
       const color = new THREE.Color().setHSL(Math.random(), 0.7, 0.6);
+
       return { position: new THREE.Vector3(x, y, z), color: color };
     });
   }, []);

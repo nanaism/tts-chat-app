@@ -1,6 +1,8 @@
 "use client";
 
 import { QrCodeScanner } from "@/components/qr-code-scanner";
+import { Button } from "@/components/ui/button";
+import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 
@@ -55,7 +57,9 @@ export default function LoginPage() {
             QRコードでログイン
           </h1>
           <p className="text-gray-600 mt-2">
-            先生からもらったQRコードを、四角いワクの中にうつしてね。
+            もらったQRコードを、
+            <br />
+            四角いワクの中にうつしてね。
           </p>
         </div>
         <div className="w-full max-w-xs mx-auto">
@@ -69,6 +73,13 @@ export default function LoginPage() {
             <p>{errorMessage}</p>
           </div>
         )}
+      </div>
+
+      <div className="pt-4">
+        <Button variant="outline" onClick={() => router.push("/")}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          もどる
+        </Button>
       </div>
     </main>
   );
