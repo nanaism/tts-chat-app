@@ -44,6 +44,9 @@ import {
   GLTFParser,
 } from "three/examples/jsm/loaders/GLTFLoader.js";
 
+import { QrCode } from "lucide-react"; // ★ アイコンをインポート
+import { useRouter } from "next/navigation"; // ★ useRouterをインポート
+
 const cuteFont = Kiwi_Maru({
   weight: ["400", "500"],
   subsets: ["latin"],
@@ -1227,6 +1230,40 @@ const createGoodbyeMessage = (): Message => {
   };
 };
 
+// ★★★ このキーはlogin/page.tsxと必ず同じものを使う ★★★
+const CHILD_ID_STORAGE_KEY = "near-child-id";
+
+// ★ 新しく「ログイン前」の画面コンポーネントを追加
+const PreLoginScreen = () => {
+  const router = useRouter();
+  return (
+    <div className="absolute inset-0 bg-gradient-to-br from-sky-100 via-rose-100 to-violet-200 flex flex-col justify-center items-center z-50 p-4 text-center">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+        className="space-y-6"
+      >
+        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-pink-400 to-violet-500 flex items-center justify-center shadow-2xl mx-auto">
+          <Sparkles className="w-12 h-12 text-white/90" />
+        </div>
+        <h1 className="text-3xl font-bold text-gray-800">ニアとおはなし</h1>
+        <p className="text-gray-600 max-w-sm mx-auto">
+          はじめるには、先生からもらったQRコードを読み込んでね。
+        </p>
+        <motion.button
+          onClick={() => router.push("/login")}
+          className="bg-gradient-to-br from-emerald-400 via-green-500 to-teal-500 hover:from-emerald-500 hover:to-teal-600 text-white rounded-full px-8 py-4 text-lg font-semibold shadow-xl flex items-center gap-3"
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+        >
+          <QrCode className="w-6 h-6" /> QRコードでログイン
+        </motion.button>
+      </motion.div>
+    </div>
+  );
+};
+
 export default function ChatPage() {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isNewSession, setIsNewSession] = useState(true);
@@ -1251,6 +1288,23 @@ export default function ChatPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+
+  const [childId, setChildId] = useState<string | null>(null); // ★ 子供IDを管理するstateを追加
+
+  // ★ ページ読み込み時にログイン状態をチェックするuseEffectを追加
+  useEffect(() => {
+    try {
+      const storedChildId = localStorage.getItem(CHILD_ID_STORAGE_KEY);
+      if (storedChildId) {
+        console.log("Logged in child found:", storedChildId);
+        setChildId(storedChildId);
+      } else {
+        console.log("No logged in child found.");
+      }
+    } catch (error) {
+      console.error("Could not access localStorage:", error);
+    }
+  }, []);
 
   useEffect(() => {
     try {
@@ -1550,10 +1604,37 @@ export default function ChatPage() {
     }
   };
 
+  // 1. childIdがまだ確定していない（チェック中）場合は何も表示しない
+  if (
+    childId === null &&
+    typeof window !== "undefined" &&
+    !localStorage.getItem(CHILD_ID_STORAGE_KEY)
+  ) {
+    // 初回アクセス時など、IDが存在しないことが確定している場合
+    return (
+      <main
+        className={`${cuteFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-gradient-to-br from-sky-100 to-violet-200`}
+      >
+        <PreLoginScreen />
+      </main>
+    );
+  }
+
+  // 2. childIdが確定したが、存在しない場合
+  if (!childId) {
+    // この状態は、上記の初回アクセスチェックで吸収されるが、念のためローディング表示
+    return (
+      <div className="w-full h-screen flex justify-center items-center">
+        <p>読み込み中...</p>
+      </div>
+    );
+  }
+
   return (
     <main
       className={`${cuteFont.className} w-full h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-gradient-to-br from-sky-100 to-violet-200`}
     >
+      {/* isUnlockedのロジックはそのまま活かす */}
       <AnimatePresence>
         {!isUnlocked && <UnlockScreen onUnlock={handleUnlock} />}
       </AnimatePresence>

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Zen_Kaku_Gothic_New } from "next/font/google";
+import { NextAuthSessionProvider } from "../components/privider"; // ★インポートを追加
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -22,7 +23,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.className} ${zen_kaku.className}`}>
-        {children}
+        <NextAuthSessionProvider>{children}</NextAuthSessionProvider>
       </body>
     </html>
   );
