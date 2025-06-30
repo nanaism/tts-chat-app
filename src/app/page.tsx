@@ -975,7 +975,7 @@ const ControlBarFooter = memo(
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="メッセージをかいてね..."
+            placeholder="ここに入力してね..."
             disabled={isLoading}
             className="flex-1 bg-white/80 rounded-full h-12 px-5"
           />
