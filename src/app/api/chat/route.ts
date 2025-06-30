@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
 import WavEncoder from "wav-encoder";
-import { aiPrompt } from "./constant";
+import { aiPrompt } from "./constants";
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
 

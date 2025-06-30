@@ -53,3 +53,5 @@ export const aiPrompt = `# あなたへの指示
 
 以上のキャラクター設定に基づき、次のユーザーメッセージに応答してください。
 `;
+
+export const app_version = "1.0.1";

@@ -1,5 +1,6 @@
 "use client";
 
+import { app_version } from "@/app/api/chat/constants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -1057,6 +1058,9 @@ const UnlockScreen = memo(({ onUnlock }: { onUnlock: () => void }) => (
         </motion.button>
       </div>
     </motion.div>
+    <div className="absolute bottom-4 right-4 text-xs text-gray-500/80 font-mono select-none">
+      v{app_version}
+    </div>
   </div>
 ));
 UnlockScreen.displayName = "UnlockScreen";
@@ -1327,15 +1331,26 @@ export default function ChatPage() {
           setIsSpeaking(false);
           onEnd?.();
         });
-    } else {
+      // Base64文字列をより安全なData URLスキームで再生する方式に変更
       try {
-        const decodedData = window.atob(audioSrc);
-        const buffer = Uint8Array.from(decodedData, (c) =>
-          c.charCodeAt(0)
-        ).buffer;
-        playDecodedBuffer(buffer);
+        const audioUrl = `data:audio/wav;base64,${audioSrc}`;
+        fetch(audioUrl)
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error(
+                `Failed to fetch audio data URL: ${response.statusText}`
+              );
+            }
+            return response.arrayBuffer();
+          })
+          .then(playDecodedBuffer)
+          .catch((e) => {
+            console.error("Error fetching or decoding base64 audio:", e);
+            setIsSpeaking(false);
+            onEnd?.();
+          });
       } catch (e) {
-        console.error("Error playing base64 audio:", e);
+        console.error("Error creating audio data URL:", e);
         setIsSpeaking(false);
         onEnd?.();
       }
