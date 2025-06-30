@@ -2,18 +2,15 @@ import { FinishReason, GoogleGenAI, Type } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import WavEncoder from "wav-encoder";
-import { aiPrompt } from "./constants";
+import { createAiPrompt } from "./constants";
+import { summarizeConversation } from "./summarize";
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
-
-type HistoryMessage = {
-  role: "user" | "model";
-  parts: { text: string }[];
-};
+type HistoryMessage = { role: "user" | "model"; parts: { text: string }[] };
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,26 +31,53 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { data: historyFromDb, error: historyError } = await supabaseAdmin
+    // 会話の総数を取得
+    const { count, error: countError } = await supabaseAdmin
       .from("conversations")
-      .select("role, content")
-      .eq("child_id", childId)
-      .order("created_at", { ascending: false })
-      .limit(20);
+      .select("*", { count: "exact", head: true })
+      .eq("child_id", childId);
 
-    if (historyError) throw historyError;
+    if (countError) throw countError;
 
-    const formattedHistory: HistoryMessage[] = historyFromDb
+    // 会話の往復が18回 (36メッセージ) ごとに要約を実行
+    if ((count ?? 0) > 0 && (count ?? 0) % 36 === 0) {
+      summarizeConversation(childId);
+      console.log(
+        `Conversation count is ${count}, triggering summarization for child ${childId}`
+      );
+    }
+
+    // 長期記憶(サマリー)と短期記憶(会話履歴)を並行して取得
+    const [summaryResult, historyResult] = await Promise.all([
+      supabaseAdmin
+        .from("child_summaries")
+        .select("summary")
+        .eq("child_id", childId)
+        .single(),
+      supabaseAdmin
+        .from("conversations")
+        .select("role, content")
+        .eq("child_id", childId)
+        .order("created_at", { ascending: false })
+        .limit(10),
+    ]);
+
+    if (historyResult.error) throw historyResult.error;
+
+    const summary = summaryResult.data?.summary ?? null;
+    const formattedHistory: HistoryMessage[] = (historyResult.data || [])
       .reverse()
       .map((msg) => ({
         role: msg.role === "ai" ? "model" : "user",
         parts: [{ text: msg.content }],
       }));
 
+    const aiPrompt = createAiPrompt(summary);
     const contents = [
       ...formattedHistory,
       { role: "user", parts: [{ text: aiPrompt + "\n\n" + message }] },
     ];
+
     const isFastMode = mode === "fast";
     const textModel = isFastMode
       ? "gemini-2.5-flash-lite-preview-06-17"
@@ -62,7 +86,6 @@ export async function POST(req: NextRequest) {
       ? "gemini-2.5-flash-preview-tts"
       : "gemini-2.5-pro-preview-tts";
 
-    // --- テキストと感情を生成 ---
     const chatResult = await genAI.models.generateContent({
       model: textModel,
       contents: contents,
@@ -71,15 +94,8 @@ export async function POST(req: NextRequest) {
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            emotion: {
-              type: Type.STRING,
-              description:
-                "応答内容に最も合う感情をリストから一つだけ選んでください。",
-            },
-            responseText: {
-              type: Type.STRING,
-              description: "ユーザーへの応答メッセージ本文。",
-            },
+            emotion: { type: Type.STRING },
+            responseText: { type: Type.STRING },
           },
           required: ["emotion", "responseText"],
         },
@@ -88,15 +104,7 @@ export async function POST(req: NextRequest) {
 
     let aiResponse: { emotion: string; responseText: string };
 
-    // 1. まず、AIからの生の応答全体をログに出力してみる
-    console.log(
-      "Full chatResult from Gemini:",
-      JSON.stringify(chatResult, null, 2)
-    );
-
-    // 2. セーフティフィルターが作動したかチェック
     if (chatResult.candidates?.[0]?.finishReason === FinishReason.SAFETY) {
-      console.log("Safety filter triggered. Providing a safe response.");
       aiResponse = {
         emotion: "sad",
         responseText:
@@ -104,25 +112,17 @@ export async function POST(req: NextRequest) {
       };
     } else {
       const rawResponse = chatResult.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawResponse) {
+      if (!rawResponse)
         throw new Error("AIから有効な応答を取得できませんでした。");
-      }
-
-      // 3. パースする前の生のJSON文字列もログに出力
-      console.log("Raw JSON response from AI:", rawResponse);
-
       aiResponse = JSON.parse(rawResponse);
     }
-
-    // 4. 最終的に採用された感情とテキストをログに出力
-    console.log("Final emotion and responseText:", aiResponse);
 
     const { emotion, responseText } = aiResponse;
     if (!responseText || !emotion) {
       throw new Error("AIからの応答形式が正しくありません。");
     }
 
-    await Promise.all([
+    Promise.all([
       supabaseAdmin
         .from("conversations")
         .insert({ child_id: childId, role: "user", content: message }),
@@ -144,19 +144,15 @@ export async function POST(req: NextRequest) {
       config: {
         responseModalities: ["AUDIO"],
         speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: "Zephyr" },
-          },
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
         },
       },
     });
 
     const audioBase64 =
       ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-    if (!audioBase64) {
+    if (!audioBase64)
       throw new Error("Gemini APIから有効な音声データが返されませんでした。");
-    }
 
     const sampleRate = 24000;
     const pcmData = Buffer.from(audioBase64, "base64");
