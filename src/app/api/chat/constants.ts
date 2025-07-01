@@ -63,7 +63,7 @@ ${summarySection}
 `;
 };
 
-export const app_version = "1.0.1";
+export const app_version = "2.0.0";
 
 export const createSummaryPrompt = (conversationText: string) => {
   return `# 指示

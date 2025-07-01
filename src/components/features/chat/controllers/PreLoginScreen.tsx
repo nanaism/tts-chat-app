@@ -1,5 +1,6 @@
 "use client";
 
+import { app_version } from "@/app/api/chat/constants";
 import { motion } from "framer-motion";
 import { QrCode, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -46,6 +47,9 @@ export const PreLoginScreen = ({ onDemoStart }: Props) => {
           </motion.button>
         </div>
       </motion.div>
+      <div className="absolute bottom-4 right-4 text-xs text-gray-500/80 font-mono select-none">
+        v{app_version}
+      </div>
     </div>
   );
 };
