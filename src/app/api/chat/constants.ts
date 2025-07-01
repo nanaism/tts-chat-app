@@ -63,8 +63,6 @@ ${summarySection}
 `;
 };
 
-export const app_version = "2.0.0";
-
 export const createSummaryPrompt = (conversationText: string) => {
   return `# 指示
   あなたは、ユーザー（子ども）とAIアシスタント『ニア』の会話履歴を分析する、有能なアシスタントです。
@@ -85,3 +83,7 @@ export const createSummaryPrompt = (conversationText: string) => {
   ${conversationText}
   上記の会話履歴から、要約を生成してください。`;
 };
+
+export const app_version = "2.0.0";
+
+export const max_conversation_length = 10;

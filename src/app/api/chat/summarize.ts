@@ -1,13 +1,13 @@
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
-import { createSummaryPrompt } from "./constants";
+import { createSummaryPrompt, max_conversation_length } from "./constants";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
-const summaryModel = "gemini-1.5-flash";
+const summaryModel = "gemini-2.5-pro";
 
 // 要約を実行する関数 (非同期で呼び出される)
 export async function summarizeConversation(childId: string) {
@@ -21,7 +21,11 @@ export async function summarizeConversation(childId: string) {
       .order("created_at", { ascending: true })
       .limit(500);
 
-    if (convError || !conversations || conversations.length < 10) {
+    if (
+      convError ||
+      !conversations ||
+      conversations.length < max_conversation_length
+    ) {
       console.log("Not enough conversations to summarize.");
       return;
     }
