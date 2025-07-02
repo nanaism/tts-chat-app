@@ -1,15 +1,19 @@
+// src/components/features/chat/controllers/PreLoginScreen.tsx
+
 "use client";
 
 import { app_version } from "@/app/api/chat/constants";
 import { motion } from "framer-motion";
 import { QrCode, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 
 type Props = {
   onDemoStart: () => void;
+  children?: ReactNode; // 親から追加の要素を受け取るためのchildren
 };
 
-export const PreLoginScreen = ({ onDemoStart }: Props) => {
+export const PreLoginScreen = ({ onDemoStart, children }: Props) => {
   const router = useRouter();
   return (
     <div className="absolute inset-0 bg-gradient-to-br from-sky-100 via-rose-100 to-violet-200 flex flex-col justify-center items-center z-50 p-4 text-center">
@@ -27,6 +31,7 @@ export const PreLoginScreen = ({ onDemoStart }: Props) => {
           はじめるには、QRコードを読み込んでね！
         </p>
 
+        {/* メインのアクションボタン */}
         <div className="flex flex-col sm:flex-row gap-4">
           <motion.button
             onClick={() => router.push("/login")}
@@ -46,6 +51,9 @@ export const PreLoginScreen = ({ onDemoStart }: Props) => {
             <Sparkles className="w-6 h-6" /> デモをはじめる
           </motion.button>
         </div>
+
+        {/* children をここで描画することで、親から保護者ログインボタンなどを渡せるようにする */}
+        {children}
       </motion.div>
       <div className="absolute bottom-4 right-4 text-xs text-gray-500/80 font-mono select-none">
         v{app_version}

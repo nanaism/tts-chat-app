@@ -2,7 +2,8 @@ import { FinishReason, GoogleGenAI, Type } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import WavEncoder from "wav-encoder";
-import { createAiPrompt } from "./constants";
+// ★ 1. 定数をインポート
+import { createAiPrompt, max_conversation_length } from "./constants";
 import { summarizeConversation } from "./summarize";
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
@@ -48,7 +49,9 @@ export async function POST(req: NextRequest) {
       if (countError)
         console.error("Failed to get conversation count:", countError);
 
-      if ((count ?? 0) > 0 && (count ?? 0) % 36 === 0) {
+      // ★ 2. トリガーの条件を修正
+      if ((count ?? 0) > 0 && (count ?? 0) % max_conversation_length === 0) {
+        // summarizeConversationはawaitしない（非同期で実行し、応答を待たない）
         summarizeConversation(childId);
         console.log(
           `Conversation count is ${count}, triggering summarization for child ${childId}`
@@ -141,14 +144,12 @@ export async function POST(req: NextRequest) {
         supabaseAdmin
           .from("conversations")
           .insert({ child_id: childId, role: "user", content: message }),
-        supabaseAdmin
-          .from("conversations")
-          .insert({
-            child_id: childId,
-            role: "ai",
-            content: responseText,
-            emotion: emotion,
-          }),
+        supabaseAdmin.from("conversations").insert({
+          child_id: childId,
+          role: "ai",
+          content: responseText,
+          emotion: emotion,
+        }),
       ]).catch((dbError) =>
         console.error("DB insert failed but continuing:", dbError)
       );
