@@ -18,8 +18,7 @@
 ## 🚀 デモサイト (Live Demo)
 
 **以下のURLから、実際にニアとのおはなしをお試しいただけます！**
-
-### [➡️ Near(ニア)とおはなししてみる](https://near.aiichiro.jp/)
+### [*Near.new*](https://near.new)
 
 ---
 
