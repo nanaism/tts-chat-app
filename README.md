@@ -18,7 +18,7 @@
 ## 🚀 デモサイト (Live Demo)
 
 **以下のURLから、実際にニアとのおはなしをお試しいただけます！**
-### [*Near.new*](https://near.new)
+# [*Near.new*](https://near.new)
 
 ---
 
